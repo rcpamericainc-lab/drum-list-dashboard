@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
 import {
   computeOrderTiming,
+  currentOrderWeek,
   formatDate,
   formatWeekLabel,
   toDateKey,
@@ -60,6 +61,10 @@ export default function OrderingPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [filter, setFilter] = useState<OrderStatus | "all">("all");
+  const [weekFilter, setWeekFilter] = useState<
+    "all" | "past" | "current" | "upcoming"
+  >("all");
+  const currentWeek = useMemo(() => currentOrderWeek(), []);
 
   const [queue, setQueue] = useState<QueuedOrder[]>([]);
   const [online, setOnline] = useState(true);
@@ -234,11 +239,27 @@ export default function OrderingPage() {
     setDateNeeded("");
   }
 
-  const queuedForRoute = queue.filter((q) => q.payload.route_number === route);
+  const matchesWeek = (wk: string) =>
+    weekFilter === "all"
+      ? true
+      : weekFilter === "current"
+        ? wk === currentWeek
+        : weekFilter === "past"
+          ? wk < currentWeek
+          : wk > currentWeek;
+
+  const queuedForRoute = queue.filter(
+    (q) =>
+      q.payload.route_number === route &&
+      matchesWeek(q.payload.order_week as string),
+  );
   const showQueued = filter === "all" || filter === "pending";
-  const filteredOrders =
-    filter === "all" ? orders : orders.filter((o) => o.status === filter);
-  const totalForRoute = orders.length + queuedForRoute.length;
+  const filteredOrders = orders.filter(
+    (o) =>
+      (filter === "all" || o.status === filter) && matchesWeek(o.order_week),
+  );
+  const shownCount =
+    filteredOrders.length + (showQueued ? queuedForRoute.length : 0);
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-5">
@@ -419,23 +440,56 @@ export default function OrderingPage() {
               Orders on Route {route}
             </h2>
             <span className="text-sm text-slate-500">
-              {loadingOrders ? "Loading…" : `${totalForRoute} total`}
+              {loadingOrders
+                ? "Loading…"
+                : `${shownCount} order${shownCount === 1 ? "" : "s"}`}
             </span>
           </div>
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            <FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
-              All
-            </FilterChip>
-            {ORDER_STATUSES.map((status) => (
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap gap-2">
               <FilterChip
-                key={status}
-                active={filter === status}
-                onClick={() => setFilter(status)}
+                active={weekFilter === "all"}
+                onClick={() => setWeekFilter("all")}
               >
-                {STATUS_META[status].label}
+                All weeks
               </FilterChip>
-            ))}
+              <FilterChip
+                active={weekFilter === "past"}
+                onClick={() => setWeekFilter("past")}
+              >
+                Past
+              </FilterChip>
+              <FilterChip
+                active={weekFilter === "current"}
+                onClick={() => setWeekFilter("current")}
+              >
+                This week
+              </FilterChip>
+              <FilterChip
+                active={weekFilter === "upcoming"}
+                onClick={() => setWeekFilter("upcoming")}
+              >
+                Upcoming
+              </FilterChip>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <FilterChip
+                active={filter === "all"}
+                onClick={() => setFilter("all")}
+              >
+                All
+              </FilterChip>
+              {ORDER_STATUSES.map((status) => (
+                <FilterChip
+                  key={status}
+                  active={filter === status}
+                  onClick={() => setFilter(status)}
+                >
+                  {STATUS_META[status].label}
+                </FilterChip>
+              ))}
+            </div>
           </div>
 
           <ul className="mt-4 space-y-3">
