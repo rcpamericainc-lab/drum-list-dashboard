@@ -5,8 +5,9 @@ import { useMemo, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
+import { ordersToCsv } from "@/lib/csv";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
-import { formatDate, formatWeekLabel } from "@/lib/order-week";
+import { currentOrderWeek, formatDate, formatWeekLabel } from "@/lib/order-week";
 
 export type OfficeOrder = Database["public"]["Tables"]["orders"]["Row"];
 
@@ -32,6 +33,8 @@ export function OfficeDashboard({
   const [weekFilter, setWeekFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exportFrom, setExportFrom] = useState("");
+  const [exportTo, setExportTo] = useState("");
 
   const routes = useMemo(
     () => Array.from(new Set(orders.map((o) => o.route_number))).sort(),
@@ -71,6 +74,66 @@ export function OfficeDashboard({
       setOrders(previous); // rollback
       setError(`Couldn't update status: ${updateError.message}`);
     }
+  }
+
+  // Exports honor the active Route + Status filters (not the week filter, which
+  // each export controls itself).
+  function matchesRouteStatus(o: OfficeOrder) {
+    return (
+      (routeFilter === "all" || o.route_number === routeFilter) &&
+      (statusFilter === "all" || o.status === statusFilter)
+    );
+  }
+
+  function downloadCsv(filename: string, rows: OfficeOrder[]) {
+    if (rows.length === 0) {
+      setError("No orders match that selection — nothing to export.");
+      return;
+    }
+    setError(null);
+    const blob = new Blob([ordersToCsv(rows)], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportThisWeek() {
+    const week = currentOrderWeek();
+    downloadCsv(
+      `orders_week-${week}.csv`,
+      orders.filter((o) => o.order_week === week && matchesRouteStatus(o)),
+    );
+  }
+
+  function exportCurrentView() {
+    const parts = ["orders"];
+    if (routeFilter !== "all") parts.push(`route-${routeFilter}`);
+    if (statusFilter !== "all") parts.push(statusFilter);
+    if (weekFilter !== "all") parts.push(`week-${weekFilter}`);
+    downloadCsv(`${parts.join("_")}.csv`, filtered);
+  }
+
+  function exportRange() {
+    if (!exportFrom || !exportTo) {
+      setError("Pick both a start and end date for the range export.");
+      return;
+    }
+    const [from, to] =
+      exportFrom <= exportTo ? [exportFrom, exportTo] : [exportTo, exportFrom];
+    downloadCsv(
+      `orders_${from}_to_${to}.csv`,
+      orders.filter(
+        (o) =>
+          o.order_week >= from && o.order_week <= to && matchesRouteStatus(o),
+      ),
+    );
   }
 
   return (
@@ -120,6 +183,69 @@ export function OfficeDashboard({
             Clear filters
           </button>
         )}
+      </div>
+
+      {/* Export */}
+      <div className="flex flex-wrap items-end gap-4 rounded-xl bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Export CSV
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={exportThisWeek}
+              className="h-10 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white transition hover:bg-emerald-800"
+            >
+              Export this week
+            </button>
+            <button
+              type="button"
+              onClick={exportCurrentView}
+              className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Export current view ({filtered.length})
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-end gap-2">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              From (week of)
+            </span>
+            <input
+              type="date"
+              value={exportFrom}
+              onChange={(e) => setExportFrom(e.target.value)}
+              className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              To (week of)
+            </span>
+            <input
+              type="date"
+              value={exportTo}
+              onChange={(e) => setExportTo(e.target.value)}
+              className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={exportRange}
+            className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Export range
+          </button>
+        </div>
+
+        <p className="w-full text-xs text-slate-400">
+          &ldquo;This week&rdquo; and range exports also apply the Route and
+          Status filters above. &ldquo;Current view&rdquo; exports exactly the
+          rows shown.
+        </p>
       </div>
 
       {error && (
