@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
@@ -232,12 +231,6 @@ export default function OrderingPage() {
             Route Intake
           </h1>
         </div>
-        <Link
-          href="/office"
-          className="shrink-0 border border-[#009ACE] bg-white px-3 py-2 text-sm font-semibold uppercase text-[#1A1A1A] transition hover:bg-[#009ACE] hover:text-white"
-        >
-          Office view
-        </Link>
       </div>
 
       <div className="mx-auto mt-5 w-full max-w-2xl space-y-6">

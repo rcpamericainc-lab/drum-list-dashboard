@@ -1,4 +1,3 @@
-import Link from "next/link";
 import Image from "next/image";
 
 import { createClient } from "@/lib/supabase/server";
@@ -34,12 +33,6 @@ export default async function OfficePage() {
             Order Management
           </h1>
         </div>
-        <Link
-          href="/"
-          className="shrink-0 border border-[#009ACE] bg-white px-3 py-2 text-sm font-semibold uppercase text-[#1A1A1A] transition hover:bg-[#009ACE] hover:text-white"
-        >
-          ← Order form
-        </Link>
       </div>
 
       <div className="mx-auto mt-6 w-full max-w-7xl">
