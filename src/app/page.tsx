@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,6 +13,7 @@ import {
   currentOrderWeek,
   formatDate,
   formatWeekLabel,
+  parseDateKey,
   toDateKey,
 } from "@/lib/order-week";
 import { ROUTE_NUMBERS, describeRoute, getRoute } from "@/lib/routes";
@@ -32,11 +34,56 @@ const QUEUE_KEY = "fleetview.queue.v1";
 const byDateNeeded = (a: Order, b: Order) =>
   a.date_needed.localeCompare(b.date_needed);
 
+const DAY_MS = 86_400_000;
+
 function makeId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function addMonths(date: Date, months: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + months, date.getDate());
+}
+
+function mondayOnOrAfter(date: Date): Date {
+  const day = date.getDay();
+  const offset = day === 0 ? 1 : (8 - day) % 7;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
+}
+
+function mondayOnOrBefore(date: Date): Date {
+  const day = date.getDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + offset);
+}
+
+function weekOptionsAround(weekKey: string): string[] {
+  const currentMonday = parseDateKey(weekKey);
+  const start = mondayOnOrAfter(addMonths(currentMonday, -1));
+  const end = mondayOnOrBefore(addMonths(currentMonday, 1));
+  const weeks: string[] = [];
+
+  for (
+    let cursor = start;
+    cursor <= end;
+    cursor = new Date(cursor.getTime() + 7 * DAY_MS)
+  ) {
+    weeks.push(toDateKey(cursor));
+  }
+
+  return weeks;
+}
+
+function formatWeekOfOption(weekKey: string): string {
+  const label = parseDateKey(weekKey).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `Week of ${label}`;
 }
 
 type Confirmation = {
@@ -61,10 +108,12 @@ export default function OrderingPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [filter, setFilter] = useState<OrderStatus | "all">("all");
-  const [weekFilter, setWeekFilter] = useState<
-    "all" | "past" | "current" | "upcoming"
-  >("all");
   const currentWeek = useMemo(() => currentOrderWeek(), []);
+  const weekOptions = useMemo(
+    () => weekOptionsAround(currentWeek),
+    [currentWeek],
+  );
+  const [weekFilter, setWeekFilter] = useState(currentWeek);
 
   const [queue, setQueue] = useState<QueuedOrder[]>([]);
   const [online, setOnline] = useState(true);
@@ -239,14 +288,7 @@ export default function OrderingPage() {
     setDateNeeded("");
   }
 
-  const matchesWeek = (wk: string) =>
-    weekFilter === "all"
-      ? true
-      : weekFilter === "current"
-        ? wk === currentWeek
-        : weekFilter === "past"
-          ? wk < currentWeek
-          : wk > currentWeek;
+  const matchesWeek = (wk: string) => wk === weekFilter;
 
   const queuedForRoute = queue.filter(
     (q) =>
@@ -262,17 +304,27 @@ export default function OrderingPage() {
     filteredOrders.length + (showQueued ? queuedForRoute.length : 0);
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-5">
-      <div className="mx-auto flex w-full max-w-2xl items-center justify-between">
-        <div>
-          <p className="text-sm font-medium uppercase tracking-wide text-emerald-700">
+    <main className="min-h-screen bg-[#F5F5F5] px-4 py-5 text-[#1A1A1A]">
+      <div className="mx-auto flex w-full max-w-2xl items-center justify-between gap-4">
+        <div className="min-w-0">
+          <Image
+            src="/rcp-america-wordmark.png"
+            alt="RCP America"
+            width={1831}
+            height={555}
+            className="h-auto w-44"
+            preload
+          />
+          <p className="mt-3 text-xs font-semibold uppercase text-[#009ACE]">
             Place an order
           </p>
-          <h1 className="text-2xl font-semibold text-slate-950">FleetView</h1>
+          <h1 className="mt-1 text-4xl leading-none text-[#1A1A1A]">
+            Route Intake
+          </h1>
         </div>
         <Link
           href="/office"
-          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+          className="shrink-0 border border-[#009ACE] bg-white px-3 py-2 text-sm font-semibold uppercase text-[#1A1A1A] transition hover:bg-[#009ACE] hover:text-white"
         >
           Office view
         </Link>
@@ -281,26 +333,26 @@ export default function OrderingPage() {
       <div className="mx-auto mt-5 w-full max-w-2xl space-y-6">
         {/* Connectivity / sync status */}
         {!online ? (
-          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          <div className="border border-[#009ACE] bg-white p-3 text-sm font-medium text-[#1A1A1A]">
             You&apos;re offline.{" "}
             {queue.length > 0
               ? `${queue.length} order${queue.length === 1 ? "" : "s"} saved on this device will send automatically when you reconnect.`
               : "Orders will be saved on this device and sent when you reconnect."}
           </div>
         ) : queue.length > 0 ? (
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+          <div className="border border-[#009ACE]/30 bg-[#009ACE]/10 p-3 text-sm font-medium text-[#1A1A1A]">
             Sending {queue.length} saved order{queue.length === 1 ? "" : "s"}…
           </div>
         ) : null}
 
         {confirmation && (
-          <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4">
+          <div className="border-2 border-[#009ACE] bg-white p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-base font-semibold text-emerald-900">
+                <p className="text-base font-semibold text-[#1A1A1A]">
                   Order saved ✓
                 </p>
-                <p className="mt-1 text-sm text-emerald-800">
+                <p className="mt-1 text-sm text-[#444444]">
                   {confirmation.hasCutoff && confirmation.deliveryDate ? (
                     <>
                       <span className="font-medium">
@@ -312,7 +364,7 @@ export default function OrderingPage() {
                       </span>
                       .
                       {confirmation.rolledOver && (
-                        <span className="mt-1 block text-emerald-700">
+                        <span className="mt-1 block text-[#006F96]">
                           This was after the cutoff, so it rolled to the next
                           delivery.
                         </span>
@@ -331,7 +383,7 @@ export default function OrderingPage() {
                     </>
                   )}
                   {confirmation.offline && (
-                    <span className="mt-1 block text-emerald-700">
+                    <span className="mt-1 block text-[#006F96]">
                       You&apos;re offline — it&apos;ll send automatically when
                       you reconnect.
                     </span>
@@ -341,7 +393,7 @@ export default function OrderingPage() {
               <button
                 type="button"
                 onClick={() => setConfirmation(null)}
-                className="shrink-0 rounded-md px-2 py-1 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                className="shrink-0 px-2 py-1 text-sm font-semibold uppercase text-[#444444] hover:bg-[#F5F5F5]"
               >
                 Dismiss
               </button>
@@ -350,15 +402,15 @@ export default function OrderingPage() {
         )}
 
         {/* Intake form */}
-        <section className="rounded-xl bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-950">New order</h2>
+        <section className="border border-[#1A1A1A]/10 bg-white p-5 shadow-sm">
+          <h2 className="text-3xl leading-none text-[#1A1A1A]">New Order</h2>
           <form onSubmit={handleSubmit} className="mt-4 space-y-4">
             <div>
               <Field label="Route">
                 <select
                   value={route}
                   onChange={(e) => setRoute(e.target.value)}
-                  className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                  className="h-14 w-full border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
                 >
                   {ROUTE_NUMBERS.map((r) => (
                     <option key={r} value={r}>
@@ -368,7 +420,7 @@ export default function OrderingPage() {
                 </select>
               </Field>
               {routeConfig && (
-                <p className="mt-2 text-sm text-slate-500">
+                <p className="mt-2 text-sm text-[#888888]">
                   {describeRoute(routeConfig)}
                 </p>
               )}
@@ -381,7 +433,7 @@ export default function OrderingPage() {
                 type="text"
                 autoCapitalize="words"
                 placeholder="e.g. Sam"
-                className="h-14 w-full rounded-lg border border-slate-300 px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
               />
             </Field>
 
@@ -393,7 +445,7 @@ export default function OrderingPage() {
                 autoCapitalize="words"
                 enterKeyHint="next"
                 placeholder="e.g. Tire shine, 5-gal"
-                className="h-14 w-full rounded-lg border border-slate-300 px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
               />
             </Field>
 
@@ -404,7 +456,7 @@ export default function OrderingPage() {
                 type="text"
                 autoCapitalize="words"
                 placeholder="e.g. Downtown Auto Auction"
-                className="h-14 w-full rounded-lg border border-slate-300 px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
               />
             </Field>
 
@@ -414,19 +466,19 @@ export default function OrderingPage() {
                 onChange={(e) => setDateNeeded(e.target.value)}
                 type="date"
                 min={today}
-                className="h-14 w-full rounded-lg border border-slate-300 px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
               />
             </Field>
 
             {error && (
-              <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+              <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
                 {error}
               </p>
             )}
 
             <button
               type="submit"
-              className="h-14 w-full rounded-lg bg-emerald-700 text-lg font-semibold text-white transition hover:bg-emerald-800 active:bg-emerald-900"
+              className="h-14 w-full bg-[#009ACE] text-lg font-semibold uppercase text-white transition hover:bg-[#0084B0] active:bg-[#006F96]"
             >
               Submit order
             </button>
@@ -434,12 +486,12 @@ export default function OrderingPage() {
         </section>
 
         {/* Orders for this route */}
-        <section className="rounded-xl bg-white p-5 shadow-sm">
+        <section className="border border-[#1A1A1A]/10 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-slate-950">
+            <h2 className="text-3xl leading-none text-[#1A1A1A]">
               Orders on Route {route}
             </h2>
-            <span className="text-sm text-slate-500">
+            <span className="text-sm font-medium text-[#888888]">
               {loadingOrders
                 ? "Loading…"
                 : `${shownCount} order${shownCount === 1 ? "" : "s"}`}
@@ -447,31 +499,20 @@ export default function OrderingPage() {
           </div>
 
           <div className="mt-3 space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <FilterChip
-                active={weekFilter === "all"}
-                onClick={() => setWeekFilter("all")}
-              >
-                All weeks
-              </FilterChip>
-              <FilterChip
-                active={weekFilter === "past"}
-                onClick={() => setWeekFilter("past")}
-              >
-                Past
-              </FilterChip>
-              <FilterChip
-                active={weekFilter === "current"}
-                onClick={() => setWeekFilter("current")}
-              >
-                This week
-              </FilterChip>
-              <FilterChip
-                active={weekFilter === "upcoming"}
-                onClick={() => setWeekFilter("upcoming")}
-              >
-                Upcoming
-              </FilterChip>
+            <div className="max-w-sm">
+              <Field label="Week Of">
+                <select
+                  value={weekFilter}
+                  onChange={(e) => setWeekFilter(e.target.value)}
+                  className="h-11 w-full border border-[#888888]/50 bg-white px-3 text-sm text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                >
+                  {weekOptions.map((week) => (
+                    <option key={week} value={week}>
+                      {formatWeekOfOption(week)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </div>
             <div className="flex flex-wrap gap-2">
               <FilterChip
@@ -498,31 +539,31 @@ export default function OrderingPage() {
               queuedForRoute.map((q) => (
                 <li
                   key={q.clientId}
-                  className="rounded-lg border border-amber-200 bg-amber-50/50 p-4"
+                  className="border border-[#009ACE]/30 bg-[#009ACE]/10 p-4"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-base font-semibold text-slate-950">
+                      <p className="truncate text-base font-semibold text-[#1A1A1A]">
                         {q.payload.product_name}
                       </p>
-                      <p className="truncate text-sm text-slate-600">
+                      <p className="truncate text-sm text-[#444444]">
                         {q.payload.customer_name}
                       </p>
                     </div>
-                    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    <span className="inline-flex shrink-0 items-center gap-1.5 border border-[#009ACE] bg-white px-2.5 py-1 text-xs font-semibold text-[#1A1A1A]">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#009ACE]" />
                       Waiting to send
                     </span>
                   </div>
-                  <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm text-slate-600">
-                    <dt className="text-slate-400">Needed</dt>
-                    <dd className="text-right font-medium text-slate-700">
+                  <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm text-[#444444]">
+                    <dt className="text-[#888888]">Needed</dt>
+                    <dd className="text-right font-medium text-[#1A1A1A]">
                       {q.payload.date_needed
                         ? formatDate(q.payload.date_needed)
                         : "—"}
                     </dd>
-                    <dt className="text-slate-400">Delivery</dt>
-                    <dd className="text-right font-medium text-slate-700">
+                    <dt className="text-[#888888]">Delivery</dt>
+                    <dd className="text-right font-medium text-[#1A1A1A]">
                       {q.payload.delivery_date
                         ? formatDate(q.payload.delivery_date)
                         : "No cutoff"}
@@ -532,7 +573,7 @@ export default function OrderingPage() {
               ))}
 
             {filteredOrders.length === 0 && queuedForRoute.length === 0 ? (
-              <li className="rounded-lg border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
+              <li className="border border-dashed border-[#888888]/50 px-4 py-8 text-center text-sm text-[#888888]">
                 {loadingOrders
                   ? "Loading orders…"
                   : orders.length === 0
@@ -543,38 +584,38 @@ export default function OrderingPage() {
               filteredOrders.map((order) => (
                 <li
                   key={order.id}
-                  className="rounded-lg border border-slate-200 p-4"
+                  className="border border-[#888888]/25 p-4"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-base font-semibold text-slate-950">
+                      <p className="truncate text-base font-semibold text-[#1A1A1A]">
                         {order.product_name}
                       </p>
-                      <p className="truncate text-sm text-slate-600">
+                      <p className="truncate text-sm text-[#444444]">
                         {order.customer_name}
                       </p>
                     </div>
                     <StatusBadge status={order.status} />
                   </div>
-                  <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm text-slate-600">
-                    <dt className="text-slate-400">Needed</dt>
-                    <dd className="text-right font-medium text-slate-700">
+                  <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm text-[#444444]">
+                    <dt className="text-[#888888]">Needed</dt>
+                    <dd className="text-right font-medium text-[#1A1A1A]">
                       {formatDate(order.date_needed)}
                     </dd>
-                    <dt className="text-slate-400">Delivery</dt>
-                    <dd className="text-right font-medium text-slate-700">
+                    <dt className="text-[#888888]">Delivery</dt>
+                    <dd className="text-right font-medium text-[#1A1A1A]">
                       {order.delivery_date
                         ? formatDate(order.delivery_date)
                         : "No cutoff"}
                     </dd>
-                    <dt className="text-slate-400">Order week</dt>
-                    <dd className="text-right font-medium text-slate-700">
+                    <dt className="text-[#888888]">Order week</dt>
+                    <dd className="text-right font-medium text-[#1A1A1A]">
                       {formatWeekLabel(order.order_week)}
                     </dd>
                     {order.driver_name && (
                       <>
-                        <dt className="text-slate-400">Placed by</dt>
-                        <dd className="text-right font-medium text-slate-700">
+                        <dt className="text-[#888888]">Placed by</dt>
+                        <dd className="text-right font-medium text-[#1A1A1A]">
                           {order.driver_name}
                         </dd>
                       </>
@@ -599,7 +640,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
+      <span className="text-sm font-medium text-[#444444]">{label}</span>
       <span className="mt-1.5 block">{children}</span>
     </label>
   );
@@ -618,10 +659,10 @@ function FilterChip({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
+      className={`border px-3 py-1.5 text-sm font-semibold transition ${
         active
-          ? "border-emerald-600 bg-emerald-600 text-white"
-          : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          ? "border-[#009ACE] bg-[#009ACE] text-white"
+          : "border-[#888888]/40 bg-white text-[#444444] hover:bg-[#F5F5F5]"
       }`}
     >
       {children}

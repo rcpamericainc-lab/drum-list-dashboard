@@ -102,7 +102,7 @@ export function OfficeDashboard({
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-wrap items-end gap-4 rounded-xl bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-end gap-4 border border-[#1A1A1A]/10 bg-white p-4 shadow-sm">
         <FilterSelect
           label="Route"
           value={routeFilter}
@@ -141,7 +141,7 @@ export function OfficeDashboard({
               setStatusFilter("all");
               setWeekFilter("all");
             }}
-            className="ml-auto h-10 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50"
+            className="ml-auto h-10 border border-[#888888]/40 bg-white px-3 text-sm font-semibold uppercase text-[#444444] hover:bg-[#F5F5F5]"
           >
             Clear filters
           </button>
@@ -149,34 +149,34 @@ export function OfficeDashboard({
       </div>
 
       {/* Export */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3 border border-[#1A1A1A]/10 bg-white p-4 shadow-sm">
         <button
           type="button"
           onClick={exportCurrentView}
-          className="h-10 rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white transition hover:bg-emerald-800"
+          className="h-10 bg-[#009ACE] px-4 text-sm font-semibold uppercase text-white transition hover:bg-[#0084B0]"
         >
           Export CSV
         </button>
-        <span className="text-sm text-slate-500">
+        <span className="text-sm text-[#888888]">
           Exports the {filtered.length} order
           {filtered.length === 1 ? "" : "s"} matching the filters above.
         </span>
       </div>
 
       {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
           {error}
         </p>
       )}
 
-      <p className="text-sm text-slate-500">
+      <p className="text-sm font-medium text-[#888888]">
         Showing {filtered.length} of {orders.length} orders
       </p>
 
       {/* Orders table */}
-      <div className="overflow-x-auto rounded-xl bg-white shadow-sm">
+      <div className="overflow-x-auto border border-[#1A1A1A]/10 bg-white shadow-sm">
         <table className="w-full min-w-[880px] text-left text-sm">
-          <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+          <thead className="border-b border-[#888888]/25 bg-[#1A1A1A] text-xs uppercase text-white">
             <tr>
               <Th>Route</Th>
               <Th>Product</Th>
@@ -189,12 +189,12 @@ export function OfficeDashboard({
               <Th>Actions</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-[#888888]/20">
             {filtered.length === 0 ? (
               <tr>
                 <td
                   colSpan={9}
-                  className="px-4 py-12 text-center text-slate-500"
+                  className="px-4 py-12 text-center text-[#888888]"
                 >
                   {orders.length === 0
                     ? "No orders have been placed yet."
@@ -206,8 +206,8 @@ export function OfficeDashboard({
                 const next = NEXT_STATUS[o.status];
                 const busy = busyId === o.id;
                 return (
-                  <tr key={o.id} className="hover:bg-slate-50">
-                    <Td className="font-semibold text-slate-900">
+                  <tr key={o.id} className="hover:bg-[#F5F5F5]">
+                    <Td className="font-semibold text-[#1A1A1A]">
                       {o.route_number}
                     </Td>
                     <Td>{o.product_name}</Td>
@@ -282,13 +282,13 @@ function FilterSelect({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+      <span className="text-xs font-semibold uppercase text-[#444444]">
         {label}
       </span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+        className="h-10 border border-[#888888]/50 bg-white px-3 text-sm text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -316,10 +316,10 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-md px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50 ${
+      className={`px-3 py-1.5 text-xs font-semibold uppercase transition disabled:opacity-50 ${
         primary
-          ? "bg-emerald-700 text-white hover:bg-emerald-800"
-          : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+          ? "bg-[#009ACE] text-white hover:bg-[#0084B0]"
+          : "border border-[#888888]/40 bg-white text-[#444444] hover:bg-[#F5F5F5]"
       }`}
     >
       {children}
@@ -338,5 +338,5 @@ function Td({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <td className={`px-4 py-3 text-slate-700 ${className}`}>{children}</td>;
+  return <td className={`px-4 py-3 text-[#444444] ${className}`}>{children}</td>;
 }

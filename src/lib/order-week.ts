@@ -184,6 +184,17 @@ export function formatWeekLabel(weekKey: string): string {
   return `Week of ${label}`;
 }
 
+/** Full-form week label, e.g. "Week of Monday, July 6, 2026". */
+export function formatWeekLabelLong(weekKey: string): string {
+  const label = parseDateKey(weekKey).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `Week of ${label}`;
+}
+
 /** Human label for a plain date key, e.g. "Thu, Jul 9, 2026". */
 export function formatDate(dateKey: string): string {
   return parseDateKey(dateKey).toLocaleDateString("en-US", {
