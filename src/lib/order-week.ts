@@ -153,12 +153,6 @@ export function computeOrderTiming(now: Date, route: RouteConfig): OrderTiming {
   };
 }
 
-/** Monday (as 'YYYY-MM-DD') of the current Eastern week. */
-export function currentOrderWeek(now: Date = new Date()): string {
-  const e = easternParts(now);
-  return mondayKeyFromMs(civilMs(e.year, e.month, e.day));
-}
-
 /** Parse a 'YYYY-MM-DD' key into a local Date (avoids the UTC-parsing pitfall). */
 export function parseDateKey(key: string): Date {
   const [y, m, d] = key.split("-").map(Number);
