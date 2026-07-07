@@ -4,6 +4,22 @@
 -- Anyone who can reach the app URL can read/write orders. This is a deliberate
 -- choice for a small internal tool; do not store sensitive data here.
 
+-- ---------------------------------------------------------------------------
+-- Clean slate. Drops any prior schema (including the earlier auth-based tables)
+-- so this file can be re-run to reconcile the database. This is safe ONLY
+-- because there is no production data yet — remove this block before you have
+-- real orders you care about.
+-- ---------------------------------------------------------------------------
+drop table if exists public.orders cascade;
+drop table if exists public.driver_trucks cascade;
+drop table if exists public.drivers cascade;
+drop table if exists public.user_profiles cascade;
+drop table if exists public.cutoff_rules cascade;
+drop function if exists public.current_app_role() cascade;
+drop function if exists public.current_driver_id() cascade;
+drop type if exists public.app_role cascade;
+drop type if exists public.order_status cascade;
+
 create type public.order_status as enum (
   'pending',
   'confirmed',
