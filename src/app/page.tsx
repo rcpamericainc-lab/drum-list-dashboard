@@ -8,12 +8,12 @@ import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
 import {
-  computeOrderWeek,
+  computeOrderTiming,
   formatDate,
   formatWeekLabel,
   toDateKey,
 } from "@/lib/order-week";
-import { ROUTES } from "@/lib/routes";
+import { ROUTE_NUMBERS, describeRoute, getRoute } from "@/lib/routes";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
 
@@ -22,6 +22,14 @@ const NAME_KEY = "fleetview.driverName";
 
 const byDateNeeded = (a: Order, b: Order) =>
   a.date_needed.localeCompare(b.date_needed);
+
+type Confirmation = {
+  productName: string;
+  weekKey: string;
+  deliveryDate: string | null;
+  rolledOver: boolean;
+  hasCutoff: boolean;
+};
 
 export default function OrderingPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -39,16 +47,17 @@ export default function OrderingPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<{
-    weekKey: string;
-    productName: string;
-  } | null>(null);
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
 
   // Restore the last-used route + name from this device.
   useEffect(() => {
     const savedRoute = localStorage.getItem(ROUTE_KEY);
     const savedName = localStorage.getItem(NAME_KEY);
-    setRoute(savedRoute && ROUTES.includes(savedRoute) ? savedRoute : ROUTES[0] ?? "");
+    setRoute(
+      savedRoute && ROUTE_NUMBERS.includes(savedRoute)
+        ? savedRoute
+        : (ROUTE_NUMBERS[0] ?? ""),
+    );
     if (savedName) setDriverName(savedName);
   }, []);
 
@@ -80,6 +89,8 @@ export default function OrderingPage() {
     };
   }, [route, supabase]);
 
+  const routeConfig = route ? getRoute(route) : undefined;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -88,9 +99,13 @@ export default function OrderingPage() {
       setError("Please fill in route, product, customer, and date needed.");
       return;
     }
+    if (!routeConfig) {
+      setError("Unknown route selected.");
+      return;
+    }
 
     setSubmitting(true);
-    const orderWeek = computeOrderWeek(new Date());
+    const timing = computeOrderTiming(new Date(), routeConfig);
 
     const { data, error: insertError } = await supabase
       .from("orders")
@@ -100,7 +115,8 @@ export default function OrderingPage() {
         product_name: productName.trim(),
         customer_name: customerName.trim(),
         date_needed: dateNeeded,
-        order_week: orderWeek,
+        order_week: timing.orderWeek,
+        delivery_date: timing.deliveryDate,
       })
       .select()
       .single();
@@ -112,7 +128,13 @@ export default function OrderingPage() {
       return;
     }
 
-    setConfirmation({ weekKey: data.order_week, productName: data.product_name });
+    setConfirmation({
+      productName: data.product_name,
+      weekKey: data.order_week,
+      deliveryDate: data.delivery_date,
+      rolledOver: timing.rolledOver,
+      hasCutoff: timing.hasCutoff,
+    });
     setOrders((prev) => [...prev, data].sort(byDateNeeded));
     setProductName("");
     setCustomerName("");
@@ -148,12 +170,35 @@ export default function OrderingPage() {
                   Order placed ✓
                 </p>
                 <p className="mt-1 text-sm text-emerald-800">
-                  <span className="font-medium">{confirmation.productName}</span>{" "}
-                  landed in the{" "}
-                  <span className="font-semibold">
-                    {formatWeekLabel(confirmation.weekKey)}
-                  </span>
-                  .
+                  {confirmation.hasCutoff && confirmation.deliveryDate ? (
+                    <>
+                      <span className="font-medium">
+                        {confirmation.productName}
+                      </span>{" "}
+                      is scheduled for delivery{" "}
+                      <span className="font-semibold">
+                        {formatDate(confirmation.deliveryDate)}
+                      </span>
+                      .
+                      {confirmation.rolledOver && (
+                        <span className="mt-1 block text-emerald-700">
+                          This was after the cutoff, so it rolled to the next
+                          delivery.
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">
+                        {confirmation.productName}
+                      </span>{" "}
+                      was added to the{" "}
+                      <span className="font-semibold">
+                        {formatWeekLabel(confirmation.weekKey)}
+                      </span>{" "}
+                      (this route has no cutoff).
+                    </>
+                  )}
                 </p>
               </div>
               <button
@@ -171,19 +216,26 @@ export default function OrderingPage() {
         <section className="rounded-xl bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-950">New order</h2>
           <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            <Field label="Route">
-              <select
-                value={route}
-                onChange={(e) => setRoute(e.target.value)}
-                className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
-              >
-                {ROUTES.map((r) => (
-                  <option key={r} value={r}>
-                    Route {r}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <div>
+              <Field label="Route">
+                <select
+                  value={route}
+                  onChange={(e) => setRoute(e.target.value)}
+                  className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg text-slate-950 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                >
+                  {ROUTE_NUMBERS.map((r) => (
+                    <option key={r} value={r}>
+                      Route {r}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {routeConfig && (
+                <p className="mt-2 text-sm text-slate-500">
+                  {describeRoute(routeConfig)}
+                </p>
+              )}
+            </div>
 
             <Field label="Your name (optional)">
               <input
@@ -300,6 +352,12 @@ export default function OrderingPage() {
                     <dt className="text-slate-400">Needed</dt>
                     <dd className="text-right font-medium text-slate-700">
                       {formatDate(order.date_needed)}
+                    </dd>
+                    <dt className="text-slate-400">Delivery</dt>
+                    <dd className="text-right font-medium text-slate-700">
+                      {order.delivery_date
+                        ? formatDate(order.delivery_date)
+                        : "No cutoff"}
                     </dd>
                     <dt className="text-slate-400">Order week</dt>
                     <dd className="text-right font-medium text-slate-700">

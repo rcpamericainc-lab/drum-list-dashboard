@@ -142,6 +142,7 @@ export function OfficeDashboard({
               <Th>Route</Th>
               <Th>Placed by</Th>
               <Th>Date needed</Th>
+              <Th>Delivery</Th>
               <Th>Order week</Th>
               <Th>Status</Th>
               <Th>Actions</Th>
@@ -151,7 +152,7 @@ export function OfficeDashboard({
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-12 text-center text-slate-500"
                 >
                   {orders.length === 0
@@ -172,6 +173,7 @@ export function OfficeDashboard({
                     <Td>{o.route_number}</Td>
                     <Td>{o.driver_name ?? "—"}</Td>
                     <Td>{formatDate(o.date_needed)}</Td>
+                    <Td>{o.delivery_date ? formatDate(o.delivery_date) : "—"}</Td>
                     <Td>{formatWeekLabel(o.order_week)}</Td>
                     <Td>
                       <StatusBadge status={o.status} />

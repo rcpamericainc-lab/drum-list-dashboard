@@ -3,36 +3,6 @@ export type OrderStatus = "pending" | "confirmed" | "fulfilled" | "cancelled";
 export type Database = {
   public: {
     Tables: {
-      cutoff_rules: {
-        Row: {
-          id: string;
-          name: string;
-          cutoff_day: number;
-          cutoff_time: string;
-          timezone: string;
-          active: boolean;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          name?: string;
-          cutoff_day: number;
-          cutoff_time: string;
-          timezone?: string;
-          active?: boolean;
-          created_at?: string;
-        };
-        Update: {
-          id?: string;
-          name?: string;
-          cutoff_day?: number;
-          cutoff_time?: string;
-          timezone?: string;
-          active?: boolean;
-          created_at?: string;
-        };
-        Relationships: [];
-      };
       orders: {
         Row: {
           id: string;
@@ -43,6 +13,7 @@ export type Database = {
           date_needed: string;
           status: OrderStatus;
           order_week: string;
+          delivery_date: string | null;
           created_at: string;
         };
         Insert: {
@@ -54,6 +25,7 @@ export type Database = {
           date_needed: string;
           status?: OrderStatus;
           order_week: string;
+          delivery_date?: string | null;
           created_at?: string;
         };
         Update: {
@@ -65,6 +37,7 @@ export type Database = {
           date_needed?: string;
           status?: OrderStatus;
           order_week?: string;
+          delivery_date?: string | null;
           created_at?: string;
         };
         Relationships: [];
