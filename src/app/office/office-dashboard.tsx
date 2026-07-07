@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
 import type { Database, OrderStatus } from "@/lib/database.types";
@@ -42,6 +42,9 @@ export function OfficeDashboard({
   const [dayFilter, setDayFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The invoice value when an input was focused, so we can skip no-op saves and
+  // roll back to it if the write fails.
+  const invoiceFocusRef = useRef("");
 
   const routes = useMemo(
     () => Array.from(new Set(orders.map((o) => o.route_number))).sort(),
@@ -116,6 +119,39 @@ export function OfficeDashboard({
     if (updateError) {
       setOrders(previous); // rollback
       setError(`Couldn't update availability: ${updateError.message}`);
+    }
+  }
+
+  // Invoice numbers are typed by office staff. Keep local state in sync on every
+  // keystroke (so export/print see the latest) and persist on blur.
+  function updateInvoiceLocal(id: string, invoice_number: string) {
+    setOrders((os) =>
+      os.map((o) => (o.id === id ? { ...o, invoice_number } : o)),
+    );
+  }
+
+  async function saveInvoice(id: string, rawValue: string) {
+    if (rawValue === invoiceFocusRef.current) return; // unchanged
+    setError(null);
+    const normalized = rawValue.trim() === "" ? null : rawValue.trim();
+    setOrders((os) =>
+      os.map((o) => (o.id === id ? { ...o, invoice_number: normalized } : o)),
+    );
+
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({ invoice_number: normalized })
+      .eq("id", id);
+
+    if (updateError) {
+      const reverted =
+        invoiceFocusRef.current.trim() === ""
+          ? null
+          : invoiceFocusRef.current.trim();
+      setOrders((os) =>
+        os.map((o) => (o.id === id ? { ...o, invoice_number: reverted } : o)),
+      );
+      setError(`Couldn't save invoice number: ${updateError.message}`);
     }
   }
 
@@ -275,6 +311,7 @@ export function OfficeDashboard({
               <Th>Date needed</Th>
               <Th>Delivery</Th>
               <Th>Order week</Th>
+              <Th>Invoice #</Th>
               <Th>Availability</Th>
             </tr>
           </thead>
@@ -282,7 +319,7 @@ export function OfficeDashboard({
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-12 text-center text-[#888888]"
                 >
                   {orders.length === 0
@@ -320,6 +357,21 @@ export function OfficeDashboard({
                       )}
                     </Td>
                     <Td>{formatWeekLabel(o.order_week)}</Td>
+                    <Td>
+                      <input
+                        type="text"
+                        value={o.invoice_number ?? ""}
+                        placeholder="Add #"
+                        onFocus={(e) => {
+                          invoiceFocusRef.current = e.target.value;
+                        }}
+                        onChange={(e) =>
+                          updateInvoiceLocal(o.id, e.target.value)
+                        }
+                        onBlur={(e) => saveInvoice(o.id, e.target.value)}
+                        className="h-9 w-28 border border-[#888888]/50 bg-white px-2 text-sm text-[#1A1A1A] outline-none placeholder:text-[#888888] focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                      />
+                    </Td>
                     <Td>
                       {locked ? (
                         <span
@@ -390,6 +442,7 @@ function buildPrintHtml(
           <td>${escapeHtml(formatDate(o.date_needed))}</td>
           <td>${o.delivery_date ? escapeHtml(formatDate(o.delivery_date)) : "—"}</td>
           <td>${escapeHtml(formatWeekLabel(o.order_week))}</td>
+          <td>${o.invoice_number ? escapeHtml(o.invoice_number) : "—"}</td>
           <td class="status">${escapeHtml(STATUS_META[o.status].label)}</td>
         </tr>`,
     )
@@ -458,7 +511,7 @@ function buildPrintHtml(
     <thead>
       <tr>
         <th>Route</th><th>Product</th><th>Customer</th><th>Placed by</th>
-        <th>Date needed</th><th>Delivery</th><th>Order week</th><th>Availability</th>
+        <th>Date needed</th><th>Delivery</th><th>Order week</th><th>Invoice #</th><th>Availability</th>
       </tr>
     </thead>
     <tbody>${rows}

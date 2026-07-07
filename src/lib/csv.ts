@@ -11,6 +11,7 @@ const HEADERS = [
   "Date needed",
   "Delivery date",
   "Order week",
+  "Invoice number",
   "Availability",
   "Created at",
 ];
@@ -34,6 +35,7 @@ export function ordersToCsv(orders: Order[]): string {
     o.date_needed,
     o.delivery_date ?? "",
     o.order_week,
+    o.invoice_number ?? "",
     STATUS_META[o.status].label,
     o.created_at,
   ]);

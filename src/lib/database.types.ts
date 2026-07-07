@@ -15,6 +15,7 @@ export type Database = {
           status: OrderStatus;
           order_week: string;
           delivery_date: string | null;
+          invoice_number: string | null;
           created_at: string;
         };
         Insert: {
@@ -28,6 +29,7 @@ export type Database = {
           status?: OrderStatus;
           order_week: string;
           delivery_date?: string | null;
+          invoice_number?: string | null;
           created_at?: string;
         };
         Update: {
@@ -41,6 +43,7 @@ export type Database = {
           status?: OrderStatus;
           order_week?: string;
           delivery_date?: string | null;
+          invoice_number?: string | null;
           created_at?: string;
         };
         Relationships: [];
