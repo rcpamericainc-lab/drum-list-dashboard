@@ -6,6 +6,7 @@ export type Database = {
       orders: {
         Row: {
           id: string;
+          client_id: string;
           route_number: string;
           driver_name: string | null;
           product_name: string;
@@ -18,6 +19,7 @@ export type Database = {
         };
         Insert: {
           id?: string;
+          client_id?: string;
           route_number: string;
           driver_name?: string | null;
           product_name: string;
@@ -30,6 +32,7 @@ export type Database = {
         };
         Update: {
           id?: string;
+          client_id?: string;
           route_number?: string;
           driver_name?: string | null;
           product_name?: string;

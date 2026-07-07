@@ -31,6 +31,7 @@ create type public.order_status as enum (
 -- cutoff table. Each order stores the computed order_week + delivery_date.
 create table public.orders (
   id uuid primary key default gen_random_uuid(),
+  client_id uuid not null unique default gen_random_uuid(), -- for offline-queue idempotency
   route_number text not null,
   driver_name text,               -- optional: who placed the order
   product_name text not null,
