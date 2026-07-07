@@ -1,4 +1,5 @@
 import type { Database } from "@/lib/database.types";
+import { STATUS_META } from "@/lib/order-status";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
 
@@ -10,7 +11,7 @@ const HEADERS = [
   "Date needed",
   "Delivery date",
   "Order week",
-  "Status",
+  "Availability",
   "Created at",
 ];
 
@@ -33,7 +34,7 @@ export function ordersToCsv(orders: Order[]): string {
     o.date_needed,
     o.delivery_date ?? "",
     o.order_week,
-    o.status,
+    STATUS_META[o.status].label,
     o.created_at,
   ]);
   const lines = [HEADERS, ...rows].map((row) => row.map(escapeField).join(","));

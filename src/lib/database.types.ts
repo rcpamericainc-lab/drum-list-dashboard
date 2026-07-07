@@ -1,4 +1,4 @@
-export type OrderStatus = "pending" | "confirmed" | "fulfilled" | "cancelled";
+export type OrderStatus = "open" | "in_stock" | "out_of_stock";
 
 export type Database = {
   public: {
@@ -49,7 +49,7 @@ export type Database = {
     Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: {
-      order_status: OrderStatus;
+      order_stock_status: OrderStatus;
     };
     CompositeTypes: Record<string, never>;
   };

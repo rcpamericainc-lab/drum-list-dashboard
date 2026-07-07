@@ -168,6 +168,9 @@ export default function OrderingPage() {
       date_needed: dateNeeded,
       order_week: timing.orderWeek,
       delivery_date: timing.deliveryDate,
+      // No-cutoff routes (no delivery cutoff) are auto in-stock; the rest start
+      // "open" and wait for the office to set availability.
+      status: timing.hasCutoff ? "open" : "in_stock",
     };
 
     setSubmitting(true);

@@ -7,19 +7,27 @@ import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ordersToCsv } from "@/lib/csv";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
-import { formatDate, formatWeekLabel } from "@/lib/order-week";
+import {
+  formatDate,
+  formatWeekLabel,
+  parseDateKey,
+  toDateKey,
+} from "@/lib/order-week";
+import { getRoute } from "@/lib/routes";
 
 export type OfficeOrder = Database["public"]["Tables"]["orders"]["Row"];
 
-// Forward flow: pending -> confirmed -> fulfilled.
-const NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
-  pending: "confirmed",
-  confirmed: "fulfilled",
-};
-const ADVANCE_LABEL: Partial<Record<OrderStatus, string>> = {
-  pending: "Confirm",
-  confirmed: "Fulfill",
-};
+/** A route with no delivery cutoff (4, 6, 14) is auto in-stock and locked. */
+function isNoCutoffRoute(routeNumber: string): boolean {
+  return !getRoute(routeNumber)?.cutoff;
+}
+
+/** Shift a 'YYYY-MM-DD' key by a whole number of weeks. */
+function shiftWeeks(key: string, weeks: number): string {
+  const d = parseDateKey(key);
+  d.setDate(d.getDate() + weeks * 7);
+  return toDateKey(d);
+}
 
 export function OfficeDashboard({
   initialOrders,
@@ -74,21 +82,40 @@ export function OfficeDashboard({
     weekFilter !== "all" ||
     dayFilter !== "all";
 
-  async function setStatus(id: string, next: OrderStatus) {
+  // Setting an order out-of-stock pushes its delivery to the following week;
+  // moving it back to open/in-stock restores the original week. The shift is the
+  // difference between the two states, so any transition lands correctly.
+  async function setStockStatus(order: OfficeOrder, next: OrderStatus) {
+    if (order.status === next) return;
     setError(null);
+
+    const shift =
+      (next === "out_of_stock" ? 1 : 0) -
+      (order.status === "out_of_stock" ? 1 : 0);
+    const order_week =
+      shift === 0 ? order.order_week : shiftWeeks(order.order_week, shift);
+    const delivery_date =
+      shift === 0 || order.delivery_date === null
+        ? order.delivery_date
+        : shiftWeeks(order.delivery_date, shift);
+
     const previous = orders;
-    setOrders((os) => os.map((o) => (o.id === id ? { ...o, status: next } : o)));
-    setBusyId(id);
+    setOrders((os) =>
+      os.map((o) =>
+        o.id === order.id ? { ...o, status: next, order_week, delivery_date } : o,
+      ),
+    );
+    setBusyId(order.id);
 
     const { error: updateError } = await supabase
       .from("orders")
-      .update({ status: next })
-      .eq("id", id);
+      .update({ status: next, order_week, delivery_date })
+      .eq("id", order.id);
 
     setBusyId(null);
     if (updateError) {
       setOrders(previous); // rollback
-      setError(`Couldn't update status: ${updateError.message}`);
+      setError(`Couldn't update availability: ${updateError.message}`);
     }
   }
 
@@ -128,7 +155,7 @@ export function OfficeDashboard({
     const activeFilters: string[] = [];
     if (routeFilter !== "all") activeFilters.push(`Route ${routeFilter}`);
     if (statusFilter !== "all")
-      activeFilters.push(`Status: ${STATUS_META[statusFilter].label}`);
+      activeFilters.push(`Availability: ${STATUS_META[statusFilter].label}`);
     if (dayFilter !== "all")
       activeFilters.push(`Delivery day: ${formatDate(dayFilter)}`);
     if (weekFilter !== "all")
@@ -159,11 +186,11 @@ export function OfficeDashboard({
           ]}
         />
         <FilterSelect
-          label="Status"
+          label="Availability"
           value={statusFilter}
           onChange={(v) => setStatusFilter(v as OrderStatus | "all")}
           options={[
-            { value: "all", label: "All statuses" },
+            { value: "all", label: "All" },
             ...ORDER_STATUSES.map((s) => ({
               value: s,
               label: STATUS_META[s].label,
@@ -248,15 +275,14 @@ export function OfficeDashboard({
               <Th>Date needed</Th>
               <Th>Delivery</Th>
               <Th>Order week</Th>
-              <Th>Status</Th>
-              <Th>Actions</Th>
+              <Th>Availability</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#888888]/20">
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={9}
+                  colSpan={8}
                   className="px-4 py-12 text-center text-[#888888]"
                 >
                   {orders.length === 0
@@ -266,8 +292,8 @@ export function OfficeDashboard({
               </tr>
             ) : (
               filtered.map((o) => {
-                const next = NEXT_STATUS[o.status];
                 const busy = busyId === o.id;
+                const locked = isNoCutoffRoute(o.route_number);
                 return (
                   <tr key={o.id} className="hover:bg-[#F5F5F5]">
                     <Td className="font-semibold text-[#1A1A1A]">
@@ -280,44 +306,29 @@ export function OfficeDashboard({
                     <Td>{o.delivery_date ? formatDate(o.delivery_date) : "—"}</Td>
                     <Td>{formatWeekLabel(o.order_week)}</Td>
                     <Td>
-                      <StatusBadge status={o.status} />
-                    </Td>
-                    <Td>
-                      <div className="flex flex-wrap gap-2">
-                        {next && (
-                          <ActionButton
-                            primary
-                            disabled={busy}
-                            onClick={() => setStatus(o.id, next)}
-                          >
-                            {ADVANCE_LABEL[o.status]}
-                          </ActionButton>
-                        )}
-                        {o.status !== "cancelled" && o.status !== "fulfilled" && (
-                          <ActionButton
-                            disabled={busy}
-                            onClick={() => setStatus(o.id, "cancelled")}
-                          >
-                            Cancel
-                          </ActionButton>
-                        )}
-                        {o.status === "cancelled" && (
-                          <ActionButton
-                            disabled={busy}
-                            onClick={() => setStatus(o.id, "pending")}
-                          >
-                            Reopen
-                          </ActionButton>
-                        )}
-                        {o.status === "fulfilled" && (
-                          <ActionButton
-                            disabled={busy}
-                            onClick={() => setStatus(o.id, "confirmed")}
-                          >
-                            Reopen
-                          </ActionButton>
-                        )}
-                      </div>
+                      {locked ? (
+                        <span
+                          title="No-cutoff route — automatically in-stock"
+                          className="inline-flex"
+                        >
+                          <StatusBadge status={o.status} />
+                        </span>
+                      ) : (
+                        <select
+                          value={o.status}
+                          disabled={busy}
+                          onChange={(e) =>
+                            setStockStatus(o, e.target.value as OrderStatus)
+                          }
+                          className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
+                        >
+                          {ORDER_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {STATUS_META[s].label}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </Td>
                   </tr>
                 );
@@ -432,7 +443,7 @@ function buildPrintHtml(
     <thead>
       <tr>
         <th>Route</th><th>Product</th><th>Customer</th><th>Placed by</th>
-        <th>Date needed</th><th>Delivery</th><th>Order week</th><th>Status</th>
+        <th>Date needed</th><th>Delivery</th><th>Order week</th><th>Availability</th>
       </tr>
     </thead>
     <tbody>${rows}
@@ -472,33 +483,6 @@ function FilterSelect({
         ))}
       </select>
     </label>
-  );
-}
-
-function ActionButton({
-  primary = false,
-  disabled = false,
-  onClick,
-  children,
-}: {
-  primary?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`px-3 py-1.5 text-xs font-semibold uppercase transition disabled:opacity-50 ${
-        primary
-          ? "bg-[#009ACE] text-white hover:bg-[#0084B0]"
-          : "border border-[#888888]/40 bg-white text-[#444444] hover:bg-[#F5F5F5]"
-      }`}
-    >
-      {children}
-    </button>
   );
 }
 

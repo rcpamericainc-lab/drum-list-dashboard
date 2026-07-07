@@ -1,11 +1,16 @@
 import type { OrderStatus } from "@/lib/database.types";
 
-/** Canonical status order, used for filter chips and office status cycling. */
+/**
+ * Stock/availability state the office sets on each order:
+ *  - open: default when an order comes in; awaiting an office decision
+ *  - in_stock: proceeds on its original delivery date
+ *  - out_of_stock: moved to the following week's delivery date
+ * No-cutoff routes (4, 6, 14) are set to in_stock automatically at intake.
+ */
 export const ORDER_STATUSES: OrderStatus[] = [
-  "pending",
-  "confirmed",
-  "fulfilled",
-  "cancelled",
+  "open",
+  "in_stock",
+  "out_of_stock",
 ];
 
 type StatusMeta = {
@@ -17,24 +22,19 @@ type StatusMeta = {
 };
 
 export const STATUS_META: Record<OrderStatus, StatusMeta> = {
-  pending: {
-    label: "Pending",
-    badge: "bg-[#009ACE]/10 text-[#006F96] border-[#009ACE]/25",
-    dot: "bg-[#009ACE]",
+  open: {
+    label: "Open",
+    badge: "bg-[#F5F5F5] text-[#444444] border-[#888888]/40",
+    dot: "bg-[#888888]",
   },
-  confirmed: {
-    label: "Confirmed",
+  in_stock: {
+    label: "In-Stock",
     badge: "bg-[#009ACE] text-white border-[#009ACE]",
     dot: "bg-white",
   },
-  fulfilled: {
-    label: "Fulfilled",
+  out_of_stock: {
+    label: "Out-of-Stock",
     badge: "bg-[#1A1A1A] text-white border-[#1A1A1A]",
     dot: "bg-[#009ACE]",
-  },
-  cancelled: {
-    label: "Cancelled",
-    badge: "bg-[#F5F5F5] text-[#444444] border-[#888888]/40",
-    dot: "bg-[#888888]",
   },
 };
