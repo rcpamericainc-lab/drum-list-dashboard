@@ -303,7 +303,22 @@ export function OfficeDashboard({
                     <Td>{o.customer_name}</Td>
                     <Td>{o.driver_name ?? "—"}</Td>
                     <Td>{formatDate(o.date_needed)}</Td>
-                    <Td>{o.delivery_date ? formatDate(o.delivery_date) : "—"}</Td>
+                    <Td>
+                      {o.delivery_date === null ? (
+                        "—"
+                      ) : o.status === "out_of_stock" ? (
+                        <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+                          <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
+                            {formatDate(shiftWeeks(o.delivery_date, -1))}
+                          </span>
+                          <span className="font-semibold text-[#009ACE]">
+                            {formatDate(o.delivery_date)}
+                          </span>
+                        </span>
+                      ) : (
+                        formatDate(o.delivery_date)
+                      )}
+                    </Td>
                     <Td>{formatWeekLabel(o.order_week)}</Td>
                     <Td>
                       {locked ? (
