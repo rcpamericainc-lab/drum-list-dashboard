@@ -1,33 +1,15 @@
-import { redirect } from "next/navigation";
+import Link from "next/link";
 
-import { signOut } from "@/app/login/actions";
 import { createClient } from "@/lib/supabase/server";
 
 import { OfficeDashboard, type OfficeOrder } from "./office-dashboard";
 
 export default async function OfficePage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
-
-  const { data: profile } = await supabase
-    .from("user_profiles")
-    .select("role")
-    .eq("auth_user_id", user.id)
-    .single();
-
-  if (profile?.role !== "office") {
-    redirect("/driver");
-  }
 
   const { data: orders } = await supabase
     .from("orders")
-    .select("*, driver:drivers(name)")
+    .select("*")
     .order("order_week", { ascending: false })
     .order("date_needed", { ascending: true })
     .returns<OfficeOrder[]>();
@@ -43,16 +25,12 @@ export default async function OfficePage() {
             Order management
           </h1>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="hidden text-sm text-slate-500 sm:inline">
-            {user.email}
-          </span>
-          <form action={signOut}>
-            <button className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700">
-              Sign out
-            </button>
-          </form>
-        </div>
+        <Link
+          href="/"
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+        >
+          ← Order form
+        </Link>
       </div>
 
       <div className="mx-auto mt-6 w-full max-w-7xl">

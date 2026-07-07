@@ -2,13 +2,13 @@
 
 import { useMemo, useState } from "react";
 
+import { StatusBadge } from "@/components/status-badge";
 import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
 import { formatDate, formatWeekLabel } from "@/lib/order-week";
 
-type OrderRow = Database["public"]["Tables"]["orders"]["Row"];
-export type OfficeOrder = OrderRow & { driver: { name: string } | null };
+export type OfficeOrder = Database["public"]["Tables"]["orders"]["Row"];
 
 // Forward flow: pending -> confirmed -> fulfilled.
 const NEXT_STATUS: Partial<Record<OrderStatus, OrderStatus>> = {
@@ -27,14 +27,14 @@ export function OfficeDashboard({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [orders, setOrders] = useState<OfficeOrder[]>(initialOrders);
-  const [truckFilter, setTruckFilter] = useState("all");
+  const [routeFilter, setRouteFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
   const [weekFilter, setWeekFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const trucks = useMemo(
-    () => Array.from(new Set(orders.map((o) => o.truck_number))).sort(),
+  const routes = useMemo(
+    () => Array.from(new Set(orders.map((o) => o.route_number))).sort(),
     [orders],
   );
   const weeks = useMemo(
@@ -47,18 +47,17 @@ export function OfficeDashboard({
 
   const filtered = orders.filter(
     (o) =>
-      (truckFilter === "all" || o.truck_number === truckFilter) &&
+      (routeFilter === "all" || o.route_number === routeFilter) &&
       (statusFilter === "all" || o.status === statusFilter) &&
       (weekFilter === "all" || o.order_week === weekFilter),
   );
 
   const hasFilters =
-    truckFilter !== "all" || statusFilter !== "all" || weekFilter !== "all";
+    routeFilter !== "all" || statusFilter !== "all" || weekFilter !== "all";
 
   async function setStatus(id: string, next: OrderStatus) {
     setError(null);
     const previous = orders;
-    // Optimistic update
     setOrders((os) => os.map((o) => (o.id === id ? { ...o, status: next } : o)));
     setBusyId(id);
 
@@ -79,12 +78,12 @@ export function OfficeDashboard({
       {/* Filters */}
       <div className="flex flex-wrap items-end gap-4 rounded-xl bg-white p-4 shadow-sm">
         <FilterSelect
-          label="Truck"
-          value={truckFilter}
-          onChange={setTruckFilter}
+          label="Route"
+          value={routeFilter}
+          onChange={setRouteFilter}
           options={[
-            { value: "all", label: "All trucks" },
-            ...trucks.map((t) => ({ value: t, label: t })),
+            { value: "all", label: "All routes" },
+            ...routes.map((r) => ({ value: r, label: `Route ${r}` })),
           ]}
         />
         <FilterSelect
@@ -112,7 +111,7 @@ export function OfficeDashboard({
           <button
             type="button"
             onClick={() => {
-              setTruckFilter("all");
+              setRouteFilter("all");
               setStatusFilter("all");
               setWeekFilter("all");
             }}
@@ -140,8 +139,8 @@ export function OfficeDashboard({
             <tr>
               <Th>Product</Th>
               <Th>Customer</Th>
-              <Th>Truck</Th>
-              <Th>Driver</Th>
+              <Th>Route</Th>
+              <Th>Placed by</Th>
               <Th>Date needed</Th>
               <Th>Order week</Th>
               <Th>Status</Th>
@@ -170,8 +169,8 @@ export function OfficeDashboard({
                       {o.product_name}
                     </Td>
                     <Td>{o.customer_name}</Td>
-                    <Td>{o.truck_number}</Td>
-                    <Td>{o.driver?.name ?? "—"}</Td>
+                    <Td>{o.route_number}</Td>
+                    <Td>{o.driver_name ?? "—"}</Td>
                     <Td>{formatDate(o.date_needed)}</Td>
                     <Td>{formatWeekLabel(o.order_week)}</Td>
                     <Td>
@@ -297,16 +296,4 @@ function Td({
   className?: string;
 }) {
   return <td className={`px-4 py-3 text-slate-700 ${className}`}>{children}</td>;
-}
-
-function StatusBadge({ status }: { status: OrderStatus }) {
-  const meta = STATUS_META[status];
-  return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${meta.badge}`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-      {meta.label}
-    </span>
-  );
 }
