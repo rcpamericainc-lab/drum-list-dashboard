@@ -178,9 +178,9 @@ export function OfficeDashboard({
         <table className="w-full min-w-[880px] text-left text-sm">
           <thead className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
             <tr>
+              <Th>Route</Th>
               <Th>Product</Th>
               <Th>Customer</Th>
-              <Th>Route</Th>
               <Th>Placed by</Th>
               <Th>Date needed</Th>
               <Th>Delivery</Th>
@@ -207,11 +207,11 @@ export function OfficeDashboard({
                 const busy = busyId === o.id;
                 return (
                   <tr key={o.id} className="hover:bg-slate-50">
-                    <Td className="font-medium text-slate-900">
-                      {o.product_name}
+                    <Td className="font-semibold text-slate-900">
+                      {o.route_number}
                     </Td>
+                    <Td>{o.product_name}</Td>
                     <Td>{o.customer_name}</Td>
-                    <Td>{o.route_number}</Td>
                     <Td>{o.driver_name ?? "—"}</Td>
                     <Td>{formatDate(o.date_needed)}</Td>
                     <Td>{o.delivery_date ? formatDate(o.delivery_date) : "—"}</Td>
