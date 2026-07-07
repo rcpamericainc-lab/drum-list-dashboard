@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
 import type { Database, OrderStatus } from "@/lib/database.types";
@@ -21,27 +21,13 @@ import { ROUTE_NUMBERS, describeRoute, getRoute } from "@/lib/routes";
 type Order = Database["public"]["Tables"]["orders"]["Row"];
 type OrderInsert = Database["public"]["Tables"]["orders"]["Insert"];
 
-type QueuedOrder = {
-  clientId: string;
-  createdAt: string;
-  payload: OrderInsert; // includes client_id
-};
-
 const ROUTE_KEY = "fleetview.route";
 const NAME_KEY = "fleetview.driverName";
-const QUEUE_KEY = "fleetview.queue.v1";
 
 const byDateNeeded = (a: Order, b: Order) =>
   a.date_needed.localeCompare(b.date_needed);
 
 const DAY_MS = 86_400_000;
-
-function makeId(): string {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 function addMonths(date: Date, months: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + months, date.getDate());
@@ -92,7 +78,6 @@ type Confirmation = {
   deliveryDate: string | null;
   hasCutoff: boolean;
   rolledOver: boolean;
-  offline: boolean;
 };
 
 export default function OrderingPage() {
@@ -115,19 +100,9 @@ export default function OrderingPage() {
   );
   const [weekFilter, setWeekFilter] = useState(currentWeek);
 
-  const [queue, setQueue] = useState<QueuedOrder[]>([]);
-  const [online, setOnline] = useState(true);
-
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-
-  // Refs so interval/event handlers see current values without re-subscribing.
-  const queueRef = useRef<QueuedOrder[]>([]);
-  const routeRef = useRef(route);
-  const flushingRef = useRef(false);
-  useEffect(() => {
-    routeRef.current = route;
-  }, [route]);
 
   // Restore route + name.
   useEffect(() => {
@@ -147,74 +122,6 @@ export default function OrderingPage() {
   useEffect(() => {
     localStorage.setItem(NAME_KEY, driverName);
   }, [driverName]);
-
-  // Load the offline queue once.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(QUEUE_KEY);
-      if (raw) setQueue(JSON.parse(raw) as QueuedOrder[]);
-    } catch {
-      // ignore corrupt queue
-    }
-  }, []);
-
-  // Persist queue + mirror to ref.
-  useEffect(() => {
-    queueRef.current = queue;
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
-  }, [queue]);
-
-  // Send queued orders. Idempotent via upsert on client_id, so a retry after a
-  // dropped response never duplicates. Stops on the first failure (assume the
-  // connection dropped) and leaves the rest queued.
-  const flushQueue = useCallback(async () => {
-    if (flushingRef.current || !navigator.onLine) return;
-    flushingRef.current = true;
-    try {
-      for (const item of queueRef.current) {
-        const { data, error: syncError } = await supabase
-          .from("orders")
-          .upsert(item.payload, { onConflict: "client_id" })
-          .select()
-          .single();
-        if (syncError || !data) break;
-        setQueue((prev) => prev.filter((q) => q.clientId !== item.clientId));
-        if (data.route_number === routeRef.current) {
-          setOrders((prev) =>
-            [...prev.filter((o) => o.id !== data.id), data].sort(byDateNeeded),
-          );
-        }
-      }
-    } finally {
-      flushingRef.current = false;
-    }
-  }, [supabase]);
-
-  // Track connectivity; flush on reconnect and on an interval.
-  useEffect(() => {
-    setOnline(navigator.onLine);
-    const goOnline = () => {
-      setOnline(true);
-      void flushQueue();
-    };
-    const goOffline = () => setOnline(false);
-    window.addEventListener("online", goOnline);
-    window.addEventListener("offline", goOffline);
-    const interval = setInterval(() => {
-      if (navigator.onLine) void flushQueue();
-    }, 15000);
-    return () => {
-      window.removeEventListener("online", goOnline);
-      window.removeEventListener("offline", goOffline);
-      clearInterval(interval);
-    };
-  }, [flushQueue]);
-
-  // Whenever there's something queued and we're online, try to send it (covers
-  // both fresh submits and leftovers loaded from a previous session).
-  useEffect(() => {
-    if (queue.length > 0 && online) void flushQueue();
-  }, [queue, online, flushQueue]);
 
   // Load DB orders for the selected route.
   useEffect(() => {
@@ -238,7 +145,7 @@ export default function OrderingPage() {
 
   const routeConfig = route ? getRoute(route) : undefined;
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
@@ -254,7 +161,6 @@ export default function OrderingPage() {
     // Freeze the cutoff/delivery timing at submit time.
     const timing = computeOrderTiming(new Date(), routeConfig);
     const payload: OrderInsert = {
-      client_id: makeId(),
       route_number: route,
       driver_name: driverName.trim() || null,
       product_name: productName.trim(),
@@ -264,25 +170,33 @@ export default function OrderingPage() {
       delivery_date: timing.deliveryDate,
     };
 
-    setQueue((prev) => [
-      ...prev,
-      {
-        clientId: payload.client_id as string,
-        createdAt: new Date().toISOString(),
-        payload,
-      },
-    ]);
+    setSubmitting(true);
+    const { data, error: insertError } = await supabase
+      .from("orders")
+      .insert(payload)
+      .select()
+      .single();
+    setSubmitting(false);
+
+    if (insertError || !data) {
+      setError("Couldn't send the order. Check your connection and try again.");
+      return;
+    }
+
+    if (data.route_number === route) {
+      setOrders((prev) =>
+        [...prev.filter((o) => o.id !== data.id), data].sort(byDateNeeded),
+      );
+    }
 
     setConfirmation({
-      productName: payload.product_name,
+      productName: data.product_name,
       weekKey: timing.orderWeek,
       deliveryDate: timing.deliveryDate,
       hasCutoff: timing.hasCutoff,
       rolledOver: timing.rolledOver,
-      offline: !navigator.onLine,
     });
 
-    // The queue effect above sends it. Just clear the form.
     setProductName("");
     setCustomerName("");
     setDateNeeded("");
@@ -290,18 +204,11 @@ export default function OrderingPage() {
 
   const matchesWeek = (wk: string) => wk === weekFilter;
 
-  const queuedForRoute = queue.filter(
-    (q) =>
-      q.payload.route_number === route &&
-      matchesWeek(q.payload.order_week as string),
-  );
-  const showQueued = filter === "all" || filter === "pending";
   const filteredOrders = orders.filter(
     (o) =>
       (filter === "all" || o.status === filter) && matchesWeek(o.order_week),
   );
-  const shownCount =
-    filteredOrders.length + (showQueued ? queuedForRoute.length : 0);
+  const shownCount = filteredOrders.length;
 
   return (
     <main className="min-h-screen bg-[#F5F5F5] px-4 py-5 text-[#1A1A1A]">
@@ -331,26 +238,12 @@ export default function OrderingPage() {
       </div>
 
       <div className="mx-auto mt-5 w-full max-w-2xl space-y-6">
-        {/* Connectivity / sync status */}
-        {!online ? (
-          <div className="border border-[#009ACE] bg-white p-3 text-sm font-medium text-[#1A1A1A]">
-            You&apos;re offline.{" "}
-            {queue.length > 0
-              ? `${queue.length} order${queue.length === 1 ? "" : "s"} saved on this device will send automatically when you reconnect.`
-              : "Orders will be saved on this device and sent when you reconnect."}
-          </div>
-        ) : queue.length > 0 ? (
-          <div className="border border-[#009ACE]/30 bg-[#009ACE]/10 p-3 text-sm font-medium text-[#1A1A1A]">
-            Sending {queue.length} saved order{queue.length === 1 ? "" : "s"}…
-          </div>
-        ) : null}
-
         {confirmation && (
           <div className="border-2 border-[#009ACE] bg-white p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-base font-semibold text-[#1A1A1A]">
-                  Order saved ✓
+                  Order submitted ✓
                 </p>
                 <p className="mt-1 text-sm text-[#444444]">
                   {confirmation.hasCutoff && confirmation.deliveryDate ? (
@@ -381,12 +274,6 @@ export default function OrderingPage() {
                       </span>{" "}
                       (this route has no cutoff).
                     </>
-                  )}
-                  {confirmation.offline && (
-                    <span className="mt-1 block text-[#006F96]">
-                      You&apos;re offline — it&apos;ll send automatically when
-                      you reconnect.
-                    </span>
                   )}
                 </p>
               </div>
@@ -478,9 +365,10 @@ export default function OrderingPage() {
 
             <button
               type="submit"
-              className="h-14 w-full bg-[#009ACE] text-lg font-semibold uppercase text-white transition hover:bg-[#0084B0] active:bg-[#006F96]"
+              disabled={submitting}
+              className="h-14 w-full bg-[#009ACE] text-lg font-semibold uppercase text-white transition hover:bg-[#0084B0] active:bg-[#006F96] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Submit order
+              {submitting ? "Submitting…" : "Submit order"}
             </button>
           </form>
         </section>
@@ -534,45 +422,7 @@ export default function OrderingPage() {
           </div>
 
           <ul className="mt-4 space-y-3">
-            {/* Not-yet-sent (queued) orders for this route */}
-            {showQueued &&
-              queuedForRoute.map((q) => (
-                <li
-                  key={q.clientId}
-                  className="border border-[#009ACE]/30 bg-[#009ACE]/10 p-4"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-semibold text-[#1A1A1A]">
-                        {q.payload.product_name}
-                      </p>
-                      <p className="truncate text-sm text-[#444444]">
-                        {q.payload.customer_name}
-                      </p>
-                    </div>
-                    <span className="inline-flex shrink-0 items-center gap-1.5 border border-[#009ACE] bg-white px-2.5 py-1 text-xs font-semibold text-[#1A1A1A]">
-                      <span className="h-1.5 w-1.5 rounded-full bg-[#009ACE]" />
-                      Waiting to send
-                    </span>
-                  </div>
-                  <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm text-[#444444]">
-                    <dt className="text-[#888888]">Needed</dt>
-                    <dd className="text-right font-medium text-[#1A1A1A]">
-                      {q.payload.date_needed
-                        ? formatDate(q.payload.date_needed)
-                        : "—"}
-                    </dd>
-                    <dt className="text-[#888888]">Delivery</dt>
-                    <dd className="text-right font-medium text-[#1A1A1A]">
-                      {q.payload.delivery_date
-                        ? formatDate(q.payload.delivery_date)
-                        : "No cutoff"}
-                    </dd>
-                  </dl>
-                </li>
-              ))}
-
-            {filteredOrders.length === 0 && queuedForRoute.length === 0 ? (
+            {filteredOrders.length === 0 ? (
               <li className="border border-dashed border-[#888888]/50 px-4 py-8 text-center text-sm text-[#888888]">
                 {loadingOrders
                   ? "Loading orders…"
