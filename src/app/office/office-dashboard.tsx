@@ -310,7 +310,6 @@ export function OfficeDashboard({
               <Th>Placed by</Th>
               <Th>Date needed</Th>
               <Th>Delivery</Th>
-              <Th>Order week</Th>
               <Th>Invoice #</Th>
               <Th>Availability</Th>
             </tr>
@@ -319,7 +318,7 @@ export function OfficeDashboard({
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={9}
+                  colSpan={8}
                   className="px-4 py-12 text-center text-[#888888]"
                 >
                   {orders.length === 0
@@ -356,7 +355,6 @@ export function OfficeDashboard({
                         formatDate(o.delivery_date)
                       )}
                     </Td>
-                    <Td>{formatWeekLabel(o.order_week)}</Td>
                     <Td>
                       <input
                         type="text"
