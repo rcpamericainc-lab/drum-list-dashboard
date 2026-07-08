@@ -169,14 +169,6 @@ export default function OrderingPage() {
       prev.map((it, i) => (i === index ? { ...it, ...patch } : it)),
     );
   }
-  // Uses the previous state so rapid +/- taps accumulate instead of clobbering.
-  function adjustQuantity(index: number, delta: number) {
-    setItems((prev) =>
-      prev.map((it, i) =>
-        i === index ? { ...it, quantity: Math.max(1, it.quantity + delta) } : it,
-      ),
-    );
-  }
   function addItem() {
     setItems((prev) => [...prev, { product_name: "", quantity: 1 }]);
   }
@@ -404,51 +396,17 @@ export default function OrderingPage() {
                       placeholder="e.g. Tire shine, 5-gal"
                       className="h-14 w-full border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
                     />
-                    <div className="mt-2 flex items-center justify-between gap-2">
-                      <div className="flex h-12 items-stretch border border-[#888888]/50 bg-white">
-                        <button
-                          type="button"
-                          onClick={() => adjustQuantity(i, -1)}
-                          aria-label="Decrease quantity"
-                          className="w-12 text-2xl font-semibold text-[#444444] hover:bg-[#F5F5F5]"
-                        >
-                          −
-                        </button>
-                        <input
-                          value={it.quantity}
-                          onChange={(e) =>
-                            updateItem(i, {
-                              quantity: Math.max(
-                                1,
-                                parseInt(e.target.value, 10) || 1,
-                              ),
-                            })
-                          }
-                          type="number"
-                          min={1}
-                          inputMode="numeric"
-                          aria-label="Quantity"
-                          className="w-14 border-x border-[#888888]/50 text-center text-lg text-[#1A1A1A] outline-none focus:bg-[#009ACE]/5"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => adjustQuantity(i, 1)}
-                          aria-label="Increase quantity"
-                          className="w-12 text-2xl font-semibold text-[#444444] hover:bg-[#F5F5F5]"
-                        >
-                          +
-                        </button>
-                      </div>
-                      {items.length > 1 && (
+                    {items.length > 1 && (
+                      <div className="mt-2 flex justify-end">
                         <button
                           type="button"
                           onClick={() => removeItem(i)}
-                          className="h-12 px-3 text-sm font-semibold uppercase text-[#888888] hover:bg-[#F5F5F5]"
+                          className="h-10 px-3 text-sm font-semibold uppercase text-[#888888] hover:bg-[#F5F5F5]"
                         >
                           Remove
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -615,9 +573,6 @@ export default function OrderingPage() {
                               key={i}
                               className="truncate text-base font-semibold text-[#1A1A1A]"
                             >
-                              <span className="text-[#009ACE]">
-                                {it.quantity}×
-                              </span>{" "}
                               {it.product_name}
                             </li>
                           ))}

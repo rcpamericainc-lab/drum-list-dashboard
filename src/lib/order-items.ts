@@ -1,14 +1,9 @@
 import type { OrderItem } from "@/lib/database.types";
 
-/** e.g. "2× Tire Shine" */
-export function formatItem(item: OrderItem): string {
-  return `${item.quantity}× ${item.product_name}`;
-}
-
-/** Join an order's items into one string, e.g. "2× Tire Shine, 1× Wax". */
+/** Join an order's product names, e.g. "Tire Shine, Wax". */
 export function summarizeItems(
   items: OrderItem[] | null | undefined,
   separator = ", ",
 ): string {
-  return (items ?? []).map(formatItem).join(separator);
+  return (items ?? []).map((it) => it.product_name).join(separator);
 }

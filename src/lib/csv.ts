@@ -1,6 +1,5 @@
 import type { Database } from "@/lib/database.types";
 import { STATUS_META } from "@/lib/order-status";
-import { summarizeItems } from "@/lib/order-items";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
 
@@ -32,7 +31,7 @@ export function ordersToCsv(orders: Order[]): string {
   const rows = orders.map((o) => [
     o.route_number,
     o.driver_name ?? "",
-    summarizeItems(o.items, "; "),
+    (o.items ?? []).map((it) => it.product_name).join("; "),
     o.customer_name,
     o.customer_address ?? "",
     o.date_needed,

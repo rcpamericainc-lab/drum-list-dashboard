@@ -368,9 +368,6 @@ export function OfficeDashboard({
                       <ul className="space-y-0.5">
                         {(o.items ?? []).map((it, i) => (
                           <li key={i} className="whitespace-nowrap">
-                            <span className="font-semibold text-[#1A1A1A]">
-                              {it.quantity}×
-                            </span>{" "}
                             {it.product_name}
                           </li>
                         ))}
@@ -481,7 +478,7 @@ function buildPrintHtml(
       (o) => `
         <tr>
           <td class="route">${escapeHtml(o.route_number)}</td>
-          <td>${(o.items ?? []).map((it) => escapeHtml(`${it.quantity}× ${it.product_name}`)).join("<br>")}</td>
+          <td>${(o.items ?? []).map((it) => escapeHtml(it.product_name)).join("<br>")}</td>
           <td>${escapeHtml(o.customer_name)}${o.customer_address ? `<br><span class="addr">${escapeHtml(o.customer_address)}</span>` : ""}</td>
           <td>${escapeHtml(o.driver_name ?? "—")}</td>
           <td>${escapeHtml(formatDate(o.date_needed))}</td>
