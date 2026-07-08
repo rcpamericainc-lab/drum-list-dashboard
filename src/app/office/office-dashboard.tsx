@@ -36,7 +36,8 @@ export function OfficeDashboard({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [orders, setOrders] = useState<OfficeOrder[]>(initialOrders);
-  const [routeFilter, setRouteFilter] = useState("all");
+  // Empty = all routes; otherwise the specific routes to show together.
+  const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
   const [weekFilter, setWeekFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState("all");
@@ -73,17 +74,26 @@ export function OfficeDashboard({
 
   const filtered = orders.filter(
     (o) =>
-      (routeFilter === "all" || o.route_number === routeFilter) &&
+      (selectedRoutes.length === 0 ||
+        selectedRoutes.includes(o.route_number)) &&
       (statusFilter === "all" || o.status === statusFilter) &&
       (weekFilter === "all" || o.order_week === weekFilter) &&
       (dayFilter === "all" || o.delivery_date === dayFilter),
   );
 
   const hasFilters =
-    routeFilter !== "all" ||
+    selectedRoutes.length > 0 ||
     statusFilter !== "all" ||
     weekFilter !== "all" ||
     dayFilter !== "all";
+
+  function toggleRoute(route: string) {
+    setSelectedRoutes((prev) =>
+      prev.includes(route)
+        ? prev.filter((r) => r !== route)
+        : [...prev, route],
+    );
+  }
 
   // Setting an order out-of-stock pushes its delivery to the following week;
   // moving it back to open/in-stock restores the original week. The shift is the
@@ -163,7 +173,8 @@ export function OfficeDashboard({
     setError(null);
 
     const parts = ["orders"];
-    if (routeFilter !== "all") parts.push(`route-${routeFilter}`);
+    if (selectedRoutes.length > 0)
+      parts.push(`routes-${[...selectedRoutes].sort().join("-")}`);
     if (statusFilter !== "all") parts.push(statusFilter);
     if (dayFilter !== "all") parts.push(`day-${dayFilter}`);
     if (weekFilter !== "all") parts.push(`week-${weekFilter}`);
@@ -189,7 +200,10 @@ export function OfficeDashboard({
     setError(null);
 
     const activeFilters: string[] = [];
-    if (routeFilter !== "all") activeFilters.push(`Route ${routeFilter}`);
+    if (selectedRoutes.length > 0)
+      activeFilters.push(
+        `Route${selectedRoutes.length === 1 ? "" : "s"}: ${[...selectedRoutes].sort().join(", ")}`,
+      );
     if (statusFilter !== "all")
       activeFilters.push(`Availability: ${STATUS_META[statusFilter].label}`);
     if (dayFilter !== "all")
@@ -211,60 +225,75 @@ export function OfficeDashboard({
   return (
     <div className="space-y-4">
       {/* Filters */}
-      <div className="flex flex-wrap items-end gap-4 border border-[#1A1A1A]/10 bg-white p-4 shadow-sm">
-        <FilterSelect
-          label="Route"
-          value={routeFilter}
-          onChange={setRouteFilter}
-          options={[
-            { value: "all", label: "All routes" },
-            ...routes.map((r) => ({ value: r, label: `Route ${r}` })),
-          ]}
-        />
-        <FilterSelect
-          label="Availability"
-          value={statusFilter}
-          onChange={(v) => setStatusFilter(v as OrderStatus | "all")}
-          options={[
-            { value: "all", label: "All" },
-            ...ORDER_STATUSES.map((s) => ({
-              value: s,
-              label: STATUS_META[s].label,
-            })),
-          ]}
-        />
-        <FilterSelect
-          label="Delivery day"
-          value={dayFilter}
-          onChange={setDayFilter}
-          options={[
-            { value: "all", label: "All days" },
-            ...deliveryDays.map((d) => ({ value: d, label: formatDate(d) })),
-          ]}
-        />
-        <FilterSelect
-          label="Order week"
-          value={weekFilter}
-          onChange={setWeekFilter}
-          options={[
-            { value: "all", label: "All weeks" },
-            ...weeks.map((w) => ({ value: w, label: formatWeekLabel(w) })),
-          ]}
-        />
-        {hasFilters && (
-          <button
-            type="button"
-            onClick={() => {
-              setRouteFilter("all");
-              setStatusFilter("all");
-              setWeekFilter("all");
-              setDayFilter("all");
-            }}
-            className="ml-auto h-10 border border-[#888888]/40 bg-white px-3 text-sm font-semibold uppercase text-[#444444] hover:bg-[#F5F5F5]"
-          >
-            Clear filters
-          </button>
-        )}
+      <div className="space-y-4 border border-[#1A1A1A]/10 bg-white p-4 shadow-sm">
+        <div>
+          <span className="text-xs font-semibold uppercase text-[#444444]">
+            Routes
+          </span>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <RouteChip
+              active={selectedRoutes.length === 0}
+              onClick={() => setSelectedRoutes([])}
+            >
+              All routes
+            </RouteChip>
+            {routes.map((r) => (
+              <RouteChip
+                key={r}
+                active={selectedRoutes.includes(r)}
+                onClick={() => toggleRoute(r)}
+              >
+                Route {r}
+              </RouteChip>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-end gap-4">
+          <FilterSelect
+            label="Availability"
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as OrderStatus | "all")}
+            options={[
+              { value: "all", label: "All" },
+              ...ORDER_STATUSES.map((s) => ({
+                value: s,
+                label: STATUS_META[s].label,
+              })),
+            ]}
+          />
+          <FilterSelect
+            label="Delivery day"
+            value={dayFilter}
+            onChange={setDayFilter}
+            options={[
+              { value: "all", label: "All days" },
+              ...deliveryDays.map((d) => ({ value: d, label: formatDate(d) })),
+            ]}
+          />
+          <FilterSelect
+            label="Order week"
+            value={weekFilter}
+            onChange={setWeekFilter}
+            options={[
+              { value: "all", label: "All weeks" },
+              ...weeks.map((w) => ({ value: w, label: formatWeekLabel(w) })),
+            ]}
+          />
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedRoutes([]);
+                setStatusFilter("all");
+                setWeekFilter("all");
+                setDayFilter("all");
+              }}
+              className="ml-auto h-10 border border-[#888888]/40 bg-white px-3 text-sm font-semibold uppercase text-[#444444] hover:bg-[#F5F5F5]"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Export */}
@@ -568,6 +597,30 @@ function FilterSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+function RouteChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`border px-3 py-1.5 text-sm font-semibold transition ${
+        active
+          ? "border-[#009ACE] bg-[#009ACE] text-white"
+          : "border-[#888888]/40 bg-white text-[#444444] hover:bg-[#F5F5F5]"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
