@@ -22,6 +22,17 @@ function isNoCutoffRoute(routeNumber: string): boolean {
   return !getRoute(routeNumber)?.cutoff;
 }
 
+function shouldUseDateNeededAsDelivery(routeNumber: string): boolean {
+  return ["4", "6", "14"].includes(routeNumber);
+}
+
+function getDisplayDeliveryDate(order: OfficeOrder): string | null {
+  if (shouldUseDateNeededAsDelivery(order.route_number) && order.delivery_date === null) {
+    return order.date_needed;
+  }
+  return order.delivery_date;
+}
+
 /** Shift a 'YYYY-MM-DD' key by a whole number of weeks. */
 function shiftWeeks(key: string, weeks: number): string {
   const d = parseDateKey(key);
@@ -359,6 +370,7 @@ export function OfficeDashboard({
               filtered.map((o) => {
                 const busy = busyId === o.id;
                 const locked = isNoCutoffRoute(o.route_number);
+                const deliveryDisplay = getDisplayDeliveryDate(o);
                 return (
                   <tr key={o.id} className="hover:bg-[#F5F5F5]">
                     <Td className="font-semibold text-[#1A1A1A]">
@@ -384,9 +396,9 @@ export function OfficeDashboard({
                     <Td>{o.driver_name ?? "—"}</Td>
                     <Td>{formatDate(o.date_needed)}</Td>
                     <Td>
-                      {o.delivery_date === null ? (
+                      {deliveryDisplay === null ? (
                         "—"
-                      ) : o.status === "out_of_stock" ? (
+                      ) : o.status === "out_of_stock" && o.delivery_date !== null && !locked ? (
                         <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
                           <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
                             {formatDate(shiftWeeks(o.delivery_date, -1))}
@@ -396,7 +408,7 @@ export function OfficeDashboard({
                           </span>
                         </span>
                       ) : (
-                        formatDate(o.delivery_date)
+                        formatDate(deliveryDisplay)
                       )}
                     </Td>
                     <Td>
@@ -482,7 +494,7 @@ function buildPrintHtml(
           <td>${escapeHtml(o.customer_name)}${o.customer_address ? `<br><span class="addr">${escapeHtml(o.customer_address)}</span>` : ""}</td>
           <td>${escapeHtml(o.driver_name ?? "—")}</td>
           <td>${escapeHtml(formatDate(o.date_needed))}</td>
-          <td>${o.delivery_date ? escapeHtml(formatDate(o.delivery_date)) : "—"}</td>
+          <td>${getDisplayDeliveryDate(o) ? escapeHtml(formatDate(getDisplayDeliveryDate(o)!)) : "—"}</td>
           <td>${escapeHtml(formatWeekLabel(o.order_week))}</td>
           <td>${o.invoice_number ? escapeHtml(o.invoice_number) : "—"}</td>
           <td class="status">${escapeHtml(STATUS_META[o.status].label)}</td>
