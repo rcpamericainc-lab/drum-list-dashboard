@@ -26,7 +26,7 @@ function shouldUseDateNeededAsDelivery(routeNumber: string): boolean {
   return ["4", "6", "14"].includes(routeNumber);
 }
 
-function getDisplayDeliveryDate(order: OfficeOrder): string | null {
+function getEffectiveDeliveryDate(order: OfficeOrder): string | null {
   if (shouldUseDateNeededAsDelivery(order.route_number) && order.delivery_date === null) {
     return order.date_needed;
   }
@@ -74,7 +74,7 @@ export function OfficeDashboard({
       Array.from(
         new Set(
           orders
-            .map((o) => o.delivery_date)
+            .map((o) => getEffectiveDeliveryDate(o))
             .filter((d): d is string => d !== null),
         ),
       )
@@ -89,7 +89,7 @@ export function OfficeDashboard({
         selectedRoutes.includes(o.route_number)) &&
       (statusFilter === "all" || o.status === statusFilter) &&
       (weekFilter === "all" || o.order_week === weekFilter) &&
-      (dayFilter === "all" || o.delivery_date === dayFilter),
+      (dayFilter === "all" || getEffectiveDeliveryDate(o) === dayFilter),
   );
 
   const hasFilters =
@@ -370,7 +370,7 @@ export function OfficeDashboard({
               filtered.map((o) => {
                 const busy = busyId === o.id;
                 const locked = isNoCutoffRoute(o.route_number);
-                const deliveryDisplay = getDisplayDeliveryDate(o);
+                const deliveryDisplay = getEffectiveDeliveryDate(o);
                 return (
                   <tr key={o.id} className="hover:bg-[#F5F5F5]">
                     <Td className="font-semibold text-[#1A1A1A]">
@@ -494,7 +494,7 @@ function buildPrintHtml(
           <td>${escapeHtml(o.customer_name)}${o.customer_address ? `<br><span class="addr">${escapeHtml(o.customer_address)}</span>` : ""}</td>
           <td>${escapeHtml(o.driver_name ?? "—")}</td>
           <td>${escapeHtml(formatDate(o.date_needed))}</td>
-          <td>${getDisplayDeliveryDate(o) ? escapeHtml(formatDate(getDisplayDeliveryDate(o)!)) : "—"}</td>
+          <td>${getEffectiveDeliveryDate(o) ? escapeHtml(formatDate(getEffectiveDeliveryDate(o)!)) : "—"}</td>
           <td>${escapeHtml(formatWeekLabel(o.order_week))}</td>
           <td>${o.invoice_number ? escapeHtml(o.invoice_number) : "—"}</td>
           <td class="status">${escapeHtml(STATUS_META[o.status].label)}</td>
