@@ -1,5 +1,8 @@
 export type OrderStatus = "open" | "in_stock" | "out_of_stock";
 
+/** A single product line within an order. */
+export type OrderItem = { product_name: string; quantity: number };
+
 export type Database = {
   public: {
     Tables: {
@@ -9,8 +12,9 @@ export type Database = {
           client_id: string;
           route_number: string;
           driver_name: string | null;
-          product_name: string;
+          items: OrderItem[];
           customer_name: string;
+          customer_address: string | null;
           date_needed: string;
           status: OrderStatus;
           order_week: string;
@@ -23,8 +27,9 @@ export type Database = {
           client_id?: string;
           route_number: string;
           driver_name?: string | null;
-          product_name: string;
+          items: OrderItem[];
           customer_name: string;
+          customer_address?: string | null;
           date_needed: string;
           status?: OrderStatus;
           order_week: string;
@@ -37,8 +42,9 @@ export type Database = {
           client_id?: string;
           route_number?: string;
           driver_name?: string | null;
-          product_name?: string;
+          items?: OrderItem[];
           customer_name?: string;
+          customer_address?: string | null;
           date_needed?: string;
           status?: OrderStatus;
           order_week?: string;

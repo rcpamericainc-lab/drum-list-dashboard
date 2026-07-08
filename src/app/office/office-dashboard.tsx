@@ -305,7 +305,7 @@ export function OfficeDashboard({
           <thead className="border-b border-[#888888]/25 bg-[#1A1A1A] text-xs uppercase text-white">
             <tr>
               <Th>Route</Th>
-              <Th>Product</Th>
+              <Th>Products</Th>
               <Th>Customer</Th>
               <Th>Placed by</Th>
               <Th>Date needed</Th>
@@ -335,8 +335,26 @@ export function OfficeDashboard({
                     <Td className="font-semibold text-[#1A1A1A]">
                       {o.route_number}
                     </Td>
-                    <Td>{o.product_name}</Td>
-                    <Td>{o.customer_name}</Td>
+                    <Td>
+                      <ul className="space-y-0.5">
+                        {(o.items ?? []).map((it, i) => (
+                          <li key={i} className="whitespace-nowrap">
+                            <span className="font-semibold text-[#1A1A1A]">
+                              {it.quantity}×
+                            </span>{" "}
+                            {it.product_name}
+                          </li>
+                        ))}
+                      </ul>
+                    </Td>
+                    <Td>
+                      <div>{o.customer_name}</div>
+                      {o.customer_address && (
+                        <div className="text-xs text-[#888888]">
+                          {o.customer_address}
+                        </div>
+                      )}
+                    </Td>
                     <Td>{o.driver_name ?? "—"}</Td>
                     <Td>{formatDate(o.date_needed)}</Td>
                     <Td>
@@ -434,8 +452,8 @@ function buildPrintHtml(
       (o) => `
         <tr>
           <td class="route">${escapeHtml(o.route_number)}</td>
-          <td>${escapeHtml(o.product_name)}</td>
-          <td>${escapeHtml(o.customer_name)}</td>
+          <td>${(o.items ?? []).map((it) => escapeHtml(`${it.quantity}× ${it.product_name}`)).join("<br>")}</td>
+          <td>${escapeHtml(o.customer_name)}${o.customer_address ? `<br><span class="addr">${escapeHtml(o.customer_address)}</span>` : ""}</td>
           <td>${escapeHtml(o.driver_name ?? "—")}</td>
           <td>${escapeHtml(formatDate(o.date_needed))}</td>
           <td>${o.delivery_date ? escapeHtml(formatDate(o.delivery_date)) : "—"}</td>
@@ -488,6 +506,7 @@ function buildPrintHtml(
   tbody tr:nth-child(even) { background: #F5F5F5; }
   td.route { font-weight: 700; }
   td.status { text-transform: capitalize; }
+  .addr { font-size: 10px; color: #888888; }
   tfoot td { padding-top: 12px; font-size: 11px; color: #888888; }
   @page { size: landscape; margin: 0.5in; }
 </style>
@@ -508,7 +527,7 @@ function buildPrintHtml(
   <table>
     <thead>
       <tr>
-        <th>Route</th><th>Product</th><th>Customer</th><th>Placed by</th>
+        <th>Route</th><th>Products</th><th>Customer</th><th>Placed by</th>
         <th>Date needed</th><th>Delivery</th><th>Order week</th><th>Invoice #</th><th>Availability</th>
       </tr>
     </thead>

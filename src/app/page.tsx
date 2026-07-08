@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/status-badge";
 import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
+import { summarizeItems } from "@/lib/order-items";
 import {
   computeOrderTiming,
   currentOrderWeek,
@@ -85,12 +86,15 @@ function shiftWeeks(key: string, weeks: number): string {
 type OrderEntry = { order: Order; moved: boolean };
 
 type Confirmation = {
-  productName: string;
+  products: string;
   weekKey: string;
   deliveryDate: string | null;
   hasCutoff: boolean;
   rolledOver: boolean;
 };
+
+/** A product line being entered on the intake form. */
+type LineItem = { product_name: string; quantity: number };
 
 export default function OrderingPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -98,8 +102,11 @@ export default function OrderingPage() {
 
   const [route, setRoute] = useState<string>("");
   const [driverName, setDriverName] = useState("");
-  const [productName, setProductName] = useState("");
+  const [items, setItems] = useState<LineItem[]>([
+    { product_name: "", quantity: 1 },
+  ]);
   const [customerName, setCustomerName] = useState("");
+  const [customerAddress, setCustomerAddress] = useState("");
   const [dateNeeded, setDateNeeded] = useState("");
 
   const [orders, setOrders] = useState<Order[]>([]);
@@ -157,12 +164,44 @@ export default function OrderingPage() {
 
   const routeConfig = route ? getRoute(route) : undefined;
 
+  function updateItem(index: number, patch: Partial<LineItem>) {
+    setItems((prev) =>
+      prev.map((it, i) => (i === index ? { ...it, ...patch } : it)),
+    );
+  }
+  // Uses the previous state so rapid +/- taps accumulate instead of clobbering.
+  function adjustQuantity(index: number, delta: number) {
+    setItems((prev) =>
+      prev.map((it, i) =>
+        i === index ? { ...it, quantity: Math.max(1, it.quantity + delta) } : it,
+      ),
+    );
+  }
+  function addItem() {
+    setItems((prev) => [...prev, { product_name: "", quantity: 1 }]);
+  }
+  function removeItem(index: number) {
+    setItems((prev) =>
+      prev.length > 1 ? prev.filter((_, i) => i !== index) : prev,
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    if (!route || !productName.trim() || !customerName.trim() || !dateNeeded) {
-      setError("Please fill in route, product, customer, and date needed.");
+    // Normalize: trim names, clamp quantities to >= 1, drop blank-name rows.
+    const cleanedItems = items
+      .map((it) => ({
+        product_name: it.product_name.trim(),
+        quantity: Math.max(1, Math.floor(it.quantity) || 1),
+      }))
+      .filter((it) => it.product_name !== "");
+
+    if (!route || cleanedItems.length === 0 || !customerName.trim() || !dateNeeded) {
+      setError(
+        "Please fill in route, at least one product, customer, and date needed.",
+      );
       return;
     }
     if (!routeConfig) {
@@ -175,8 +214,9 @@ export default function OrderingPage() {
     const payload: OrderInsert = {
       route_number: route,
       driver_name: driverName.trim() || null,
-      product_name: productName.trim(),
+      items: cleanedItems,
       customer_name: customerName.trim(),
+      customer_address: customerAddress.trim() || null,
       date_needed: dateNeeded,
       order_week: timing.orderWeek,
       delivery_date: timing.deliveryDate,
@@ -205,15 +245,16 @@ export default function OrderingPage() {
     }
 
     setConfirmation({
-      productName: data.product_name,
+      products: summarizeItems(data.items),
       weekKey: timing.orderWeek,
       deliveryDate: timing.deliveryDate,
       hasCutoff: timing.hasCutoff,
       rolledOver: timing.rolledOver,
     });
 
-    setProductName("");
+    setItems([{ product_name: "", quantity: 1 }]);
     setCustomerName("");
+    setCustomerAddress("");
     setDateNeeded("");
   }
 
@@ -266,9 +307,10 @@ export default function OrderingPage() {
                   {confirmation.hasCutoff && confirmation.deliveryDate ? (
                     <>
                       <span className="font-medium">
-                        {confirmation.productName}
+                        {confirmation.products}
                       </span>{" "}
-                      is scheduled for delivery{" "}
+                      {confirmation.products.includes(",") ? "are" : "is"}{" "}
+                      scheduled for delivery{" "}
                       <span className="font-semibold">
                         {formatDate(confirmation.deliveryDate)}
                       </span>
@@ -283,7 +325,7 @@ export default function OrderingPage() {
                   ) : (
                     <>
                       <span className="font-medium">
-                        {confirmation.productName}
+                        {confirmation.products}
                       </span>{" "}
                       was added to the{" "}
                       <span className="font-semibold">
@@ -341,17 +383,83 @@ export default function OrderingPage() {
               />
             </Field>
 
-            <Field label="Product name">
-              <input
-                value={productName}
-                onChange={(e) => setProductName(e.target.value)}
-                type="text"
-                autoCapitalize="words"
-                enterKeyHint="next"
-                placeholder="e.g. Tire shine, 5-gal"
-                className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
-              />
-            </Field>
+            <div>
+              <span className="text-sm font-medium text-[#444444]">
+                Products
+              </span>
+              <div className="mt-1.5 space-y-3">
+                {items.map((it, i) => (
+                  <div
+                    key={i}
+                    className="border border-[#888888]/30 bg-[#FAFAFA] p-3"
+                  >
+                    <input
+                      value={it.product_name}
+                      onChange={(e) =>
+                        updateItem(i, { product_name: e.target.value })
+                      }
+                      type="text"
+                      autoCapitalize="words"
+                      enterKeyHint="next"
+                      placeholder="e.g. Tire shine, 5-gal"
+                      className="h-14 w-full border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                    />
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex h-12 items-stretch border border-[#888888]/50 bg-white">
+                        <button
+                          type="button"
+                          onClick={() => adjustQuantity(i, -1)}
+                          aria-label="Decrease quantity"
+                          className="w-12 text-2xl font-semibold text-[#444444] hover:bg-[#F5F5F5]"
+                        >
+                          −
+                        </button>
+                        <input
+                          value={it.quantity}
+                          onChange={(e) =>
+                            updateItem(i, {
+                              quantity: Math.max(
+                                1,
+                                parseInt(e.target.value, 10) || 1,
+                              ),
+                            })
+                          }
+                          type="number"
+                          min={1}
+                          inputMode="numeric"
+                          aria-label="Quantity"
+                          className="w-14 border-x border-[#888888]/50 text-center text-lg text-[#1A1A1A] outline-none focus:bg-[#009ACE]/5"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => adjustQuantity(i, 1)}
+                          aria-label="Increase quantity"
+                          className="w-12 text-2xl font-semibold text-[#444444] hover:bg-[#F5F5F5]"
+                        >
+                          +
+                        </button>
+                      </div>
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeItem(i)}
+                          className="h-12 px-3 text-sm font-semibold uppercase text-[#888888] hover:bg-[#F5F5F5]"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={addItem}
+                className="mt-2 text-sm font-semibold uppercase text-[#009ACE] hover:underline"
+              >
+                + Add another product
+              </button>
+            </div>
 
             <Field label="Customer name">
               <input
@@ -360,6 +468,17 @@ export default function OrderingPage() {
                 type="text"
                 autoCapitalize="words"
                 placeholder="e.g. Downtown Auto Auction"
+                className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+              />
+            </Field>
+
+            <Field label="Customer address (optional)">
+              <input
+                value={customerAddress}
+                onChange={(e) => setCustomerAddress(e.target.value)}
+                type="text"
+                autoCapitalize="words"
+                placeholder="e.g. 1200 W 5th Ave, Columbus, OH 43212"
                 className="h-14 w-full border border-[#888888]/50 px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
               />
             </Field>
@@ -457,7 +576,7 @@ export default function OrderingPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-base font-semibold text-[#888888] line-through decoration-[#009ACE] decoration-2">
-                          {order.product_name}
+                          {summarizeItems(order.items)}
                         </p>
                         <p className="truncate text-sm text-[#888888] line-through decoration-[#009ACE]/60">
                           {order.customer_name}
@@ -490,12 +609,27 @@ export default function OrderingPage() {
                   <li key={order.id} className="border border-[#888888]/25 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="truncate text-base font-semibold text-[#1A1A1A]">
-                          {order.product_name}
-                        </p>
+                        <ul className="space-y-0.5">
+                          {(order.items ?? []).map((it, i) => (
+                            <li
+                              key={i}
+                              className="truncate text-base font-semibold text-[#1A1A1A]"
+                            >
+                              <span className="text-[#009ACE]">
+                                {it.quantity}×
+                              </span>{" "}
+                              {it.product_name}
+                            </li>
+                          ))}
+                        </ul>
                         <p className="truncate text-sm text-[#444444]">
                           {order.customer_name}
                         </p>
+                        {order.customer_address && (
+                          <p className="truncate text-xs text-[#888888]">
+                            {order.customer_address}
+                          </p>
+                        )}
                       </div>
                       <StatusBadge status={order.status} />
                     </div>

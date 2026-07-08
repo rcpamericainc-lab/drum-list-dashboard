@@ -1,13 +1,15 @@
 import type { Database } from "@/lib/database.types";
 import { STATUS_META } from "@/lib/order-status";
+import { summarizeItems } from "@/lib/order-items";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
 
 const HEADERS = [
   "Route",
   "Placed by",
-  "Product",
+  "Products",
   "Customer",
+  "Customer address",
   "Date needed",
   "Delivery date",
   "Order week",
@@ -30,8 +32,9 @@ export function ordersToCsv(orders: Order[]): string {
   const rows = orders.map((o) => [
     o.route_number,
     o.driver_name ?? "",
-    o.product_name,
+    summarizeItems(o.items, "; "),
     o.customer_name,
+    o.customer_address ?? "",
     o.date_needed,
     o.delivery_date ?? "",
     o.order_week,
