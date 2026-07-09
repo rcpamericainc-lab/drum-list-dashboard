@@ -218,15 +218,34 @@ export default function OrderingPage() {
     };
 
     setSubmitting(true);
-    const { data, error: insertError } = await supabase
-      .from("orders")
-      .insert(payload)
-      .select()
-      .single();
+    let data: Order | null = null;
+    let errMessage: string | null = null;
+    try {
+      const res = await supabase
+        .from("orders")
+        .insert(payload)
+        .select()
+        .single();
+      data = res.data;
+      if (res.error) errMessage = res.error.message;
+    } catch (e) {
+      // A hard network failure rejects rather than returning { error }.
+      errMessage = e instanceof Error ? e.message : String(e);
+    }
     setSubmitting(false);
 
-    if (insertError || !data) {
-      setError("Couldn't send the order. Check your connection and try again.");
+    if (!data || errMessage) {
+      // Surface the real reason instead of always blaming the connection —
+      // a rejected insert (e.g. a stale cached app hitting the current schema)
+      // has full signal but still fails.
+      console.error("Order submit failed:", errMessage, payload);
+      const looksOffline =
+        !navigator.onLine || /failed to fetch|network/i.test(errMessage ?? "");
+      setError(
+        looksOffline
+          ? "Couldn't send the order — you appear to be offline. Try again once you have signal."
+          : `Couldn't send the order (${errMessage ?? "unexpected error"}). Please refresh the page; if it keeps happening, screenshot this and send it to the office.`,
+      );
       return;
     }
 
