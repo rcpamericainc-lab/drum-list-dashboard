@@ -377,9 +377,9 @@ export function OfficeDashboard({
                       {o.route_number}
                     </Td>
                     <Td>
-                      <ul className="space-y-0.5">
+                      <ul className="max-w-[240px] space-y-0.5">
                         {(o.items ?? []).map((it, i) => (
-                          <li key={i} className="whitespace-nowrap">
+                          <li key={i} className="break-words">
                             {it.product_name}
                           </li>
                         ))}
