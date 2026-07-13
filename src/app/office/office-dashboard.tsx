@@ -40,6 +40,50 @@ function shiftWeeks(key: string, weeks: number): string {
   return toDateKey(d);
 }
 
+type SortKey =
+  | "route"
+  | "customer"
+  | "placed_by"
+  | "date_needed"
+  | "delivery"
+  | "placed"
+  | "invoice"
+  | "availability";
+
+/** Comparable value for a column; numbers sort numerically, strings alphabetically. */
+function sortValue(o: OfficeOrder, key: SortKey): string | number {
+  switch (key) {
+    case "route": {
+      const n = Number(o.route_number);
+      return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+    }
+    case "customer":
+      return o.customer_name.toLowerCase();
+    case "placed_by":
+      return (o.driver_name ?? "").toLowerCase();
+    case "date_needed":
+      return o.date_needed;
+    case "delivery":
+      return getEffectiveDeliveryDate(o) ?? "";
+    case "placed":
+      return o.created_at;
+    case "invoice":
+      return (o.invoice_number ?? "").toLowerCase();
+    case "availability":
+      return ORDER_STATUSES.indexOf(o.status);
+  }
+}
+
+/** "Jul 7, 3:00 PM" — the office computer's local (Eastern) time. */
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function OfficeDashboard({
   initialOrders,
 }: {
@@ -54,6 +98,8 @@ export function OfficeDashboard({
   const [dayFilter, setDayFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("placed");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   // The invoice value when an input was focused, so we can skip no-op saves and
   // roll back to it if the write fails.
   const invoiceFocusRef = useRef("");
@@ -92,11 +138,31 @@ export function OfficeDashboard({
       (dayFilter === "all" || getEffectiveDeliveryDate(o) === dayFilter),
   );
 
+  const sorted = [...filtered].sort((a, b) => {
+    const va = sortValue(a, sortKey);
+    const vb = sortValue(b, sortKey);
+    let cmp =
+      typeof va === "number" && typeof vb === "number"
+        ? va - vb
+        : String(va).localeCompare(String(vb));
+    if (cmp === 0) cmp = a.created_at.localeCompare(b.created_at); // stable tiebreak
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
   const hasFilters =
     selectedRoutes.length > 0 ||
     statusFilter !== "all" ||
     weekFilter !== "all" ||
     dayFilter !== "all";
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
 
   function toggleRoute(route: string) {
     setSelectedRoutes((prev) =>
@@ -190,7 +256,7 @@ export function OfficeDashboard({
     if (dayFilter !== "all") parts.push(`day-${dayFilter}`);
     if (weekFilter !== "all") parts.push(`week-${weekFilter}`);
 
-    const blob = new Blob([ordersToCsv(filtered)], {
+    const blob = new Blob([ordersToCsv(sorted)], {
       type: "text/csv;charset=utf-8;",
     });
     const url = URL.createObjectURL(blob);
@@ -228,7 +294,7 @@ export function OfficeDashboard({
       return;
     }
     win.document.write(
-      buildPrintHtml(filtered, activeFilters, window.location.origin),
+      buildPrintHtml(sorted, activeFilters, window.location.origin),
     );
     win.document.close();
   }
@@ -344,21 +410,22 @@ export function OfficeDashboard({
         <table className="w-full min-w-[880px] text-left text-sm">
           <thead className="border-b border-[#888888]/25 bg-[#1A1A1A] text-xs uppercase text-white">
             <tr>
-              <Th>Route</Th>
+              <SortHeader label="Route" columnKey="route" active={sortKey === "route"} dir={sortDir} onSort={handleSort} />
               <Th>Products</Th>
-              <Th>Customer</Th>
-              <Th>Placed by</Th>
-              <Th>Date needed</Th>
-              <Th>Delivery</Th>
-              <Th>Invoice #</Th>
-              <Th>Availability</Th>
+              <SortHeader label="Customer" columnKey="customer" active={sortKey === "customer"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Placed by" columnKey="placed_by" active={sortKey === "placed_by"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Date needed" columnKey="date_needed" active={sortKey === "date_needed"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Delivery" columnKey="delivery" active={sortKey === "delivery"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Time placed" columnKey="placed" active={sortKey === "placed"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Invoice #" columnKey="invoice" active={sortKey === "invoice"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Availability" columnKey="availability" active={sortKey === "availability"} dir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#888888]/20">
             {filtered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-12 text-center text-[#888888]"
                 >
                   {orders.length === 0
@@ -367,7 +434,7 @@ export function OfficeDashboard({
                 </td>
               </tr>
             ) : (
-              filtered.map((o) => {
+              sorted.map((o) => {
                 const busy = busyId === o.id;
                 const locked = isNoCutoffRoute(o.route_number);
                 const deliveryDisplay = getEffectiveDeliveryDate(o);
@@ -410,6 +477,9 @@ export function OfficeDashboard({
                       ) : (
                         formatDate(deliveryDisplay)
                       )}
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      {formatDateTime(o.created_at)}
                     </Td>
                     <Td>
                       <input
@@ -635,6 +705,38 @@ function RouteChip({
 
 function Th({ children }: { children: React.ReactNode }) {
   return <th className="px-4 py-3 font-semibold">{children}</th>;
+}
+
+function SortHeader({
+  label,
+  columnKey,
+  active,
+  dir,
+  onSort,
+}: {
+  label: string;
+  columnKey: SortKey;
+  active: boolean;
+  dir: "asc" | "desc";
+  onSort: (key: SortKey) => void;
+}) {
+  return (
+    <th className="px-4 py-3 font-semibold">
+      <button
+        type="button"
+        onClick={() => onSort(columnKey)}
+        className="inline-flex items-center gap-1 whitespace-nowrap uppercase transition hover:text-white/80"
+      >
+        {label}
+        <span
+          aria-hidden
+          className={active ? "text-[#009ACE]" : "text-white/30"}
+        >
+          {active ? (dir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
+  );
 }
 
 function Td({
