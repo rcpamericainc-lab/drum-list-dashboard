@@ -7,38 +7,17 @@ import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ordersToCsv } from "@/lib/csv";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
+import { formatDate, formatWeekLabel, shiftWeeks } from "@/lib/order-week";
 import {
-  formatDate,
-  formatWeekLabel,
-  parseDateKey,
-  toDateKey,
-} from "@/lib/order-week";
-import { getRoute } from "@/lib/routes";
+  getBaseDelivery,
+  isNoCutoffRoute,
+  itemDeliveryDate,
+  itemOrderWeek,
+  normalizeItems,
+  rollupStatus,
+} from "@/lib/order-items";
 
 export type OfficeOrder = Database["public"]["Tables"]["orders"]["Row"];
-
-/** A route with no delivery cutoff (4, 6, 14) is auto in-stock and locked. */
-function isNoCutoffRoute(routeNumber: string): boolean {
-  return !getRoute(routeNumber)?.cutoff;
-}
-
-function shouldUseDateNeededAsDelivery(routeNumber: string): boolean {
-  return ["4", "6", "14"].includes(routeNumber);
-}
-
-function getEffectiveDeliveryDate(order: OfficeOrder): string | null {
-  if (shouldUseDateNeededAsDelivery(order.route_number) && order.delivery_date === null) {
-    return order.date_needed;
-  }
-  return order.delivery_date;
-}
-
-/** Shift a 'YYYY-MM-DD' key by a whole number of weeks. */
-function shiftWeeks(key: string, weeks: number): string {
-  const d = parseDateKey(key);
-  d.setDate(d.getDate() + weeks * 7);
-  return toDateKey(d);
-}
 
 type SortKey =
   | "route"
@@ -64,13 +43,13 @@ function sortValue(o: OfficeOrder, key: SortKey): string | number {
     case "date_needed":
       return o.date_needed;
     case "delivery":
-      return getEffectiveDeliveryDate(o) ?? "";
+      return getBaseDelivery(o) ?? "";
     case "placed":
       return o.created_at;
     case "invoice":
       return (o.invoice_number ?? "").toLowerCase();
     case "availability":
-      return ORDER_STATUSES.indexOf(o.status);
+      return ORDER_STATUSES.indexOf(rollupStatus(o.items));
   }
 }
 
@@ -90,7 +69,11 @@ export function OfficeDashboard({
   initialOrders: OfficeOrder[];
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const [orders, setOrders] = useState<OfficeOrder[]>(initialOrders);
+  // Normalize so every item carries a status (pre-migration rows fall back to
+  // the order's status).
+  const [orders, setOrders] = useState<OfficeOrder[]>(() =>
+    initialOrders.map((o) => ({ ...o, items: normalizeItems(o) })),
+  );
   // Empty = all routes; otherwise the specific routes to show together.
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
@@ -110,7 +93,9 @@ export function OfficeDashboard({
   );
   const weeks = useMemo(
     () =>
-      Array.from(new Set(orders.map((o) => o.order_week)))
+      Array.from(
+        new Set(orders.flatMap((o) => o.items.map((it) => itemOrderWeek(o, it)))),
+      )
         .sort()
         .reverse(),
     [orders],
@@ -119,9 +104,11 @@ export function OfficeDashboard({
     () =>
       Array.from(
         new Set(
-          orders
-            .map((o) => getEffectiveDeliveryDate(o))
-            .filter((d): d is string => d !== null),
+          orders.flatMap((o) =>
+            o.items
+              .map((it) => itemDeliveryDate(o, it))
+              .filter((d): d is string => d !== null),
+          ),
         ),
       )
         .sort()
@@ -129,13 +116,18 @@ export function OfficeDashboard({
     [orders],
   );
 
+  // An order matches if ANY of its items matches — the whole order stays visible
+  // so its context (customer, other items) is never split apart.
   const filtered = orders.filter(
     (o) =>
       (selectedRoutes.length === 0 ||
         selectedRoutes.includes(o.route_number)) &&
-      (statusFilter === "all" || o.status === statusFilter) &&
-      (weekFilter === "all" || o.order_week === weekFilter) &&
-      (dayFilter === "all" || getEffectiveDeliveryDate(o) === dayFilter),
+      (statusFilter === "all" ||
+        o.items.some((it) => it.status === statusFilter)) &&
+      (weekFilter === "all" ||
+        o.items.some((it) => itemOrderWeek(o, it) === weekFilter)) &&
+      (dayFilter === "all" ||
+        o.items.some((it) => itemDeliveryDate(o, it) === dayFilter)),
   );
 
   const sorted = [...filtered].sort((a, b) => {
@@ -172,34 +164,33 @@ export function OfficeDashboard({
     );
   }
 
-  // Setting an order out-of-stock pushes its delivery to the following week;
-  // moving it back to open/in-stock restores the original week. The shift is the
-  // difference between the two states, so any transition lands correctly.
-  async function setStockStatus(order: OfficeOrder, next: OrderStatus) {
-    if (order.status === next) return;
+  // Set one item's availability. Dates stay at their base; the out-of-stock
+  // shift is derived per item at display time. The order's rollup status is
+  // recomputed so the availability filter and exports stay accurate.
+  async function setItemStatus(
+    order: OfficeOrder,
+    index: number,
+    next: OrderStatus,
+  ) {
+    if (order.items[index]?.status === next) return;
     setError(null);
 
-    const shift =
-      (next === "out_of_stock" ? 1 : 0) -
-      (order.status === "out_of_stock" ? 1 : 0);
-    const order_week =
-      shift === 0 ? order.order_week : shiftWeeks(order.order_week, shift);
-    const delivery_date =
-      shift === 0 || order.delivery_date === null
-        ? order.delivery_date
-        : shiftWeeks(order.delivery_date, shift);
+    const nextItems = order.items.map((it, i) =>
+      i === index ? { ...it, status: next } : it,
+    );
+    const nextStatus = rollupStatus(nextItems);
 
     const previous = orders;
     setOrders((os) =>
       os.map((o) =>
-        o.id === order.id ? { ...o, status: next, order_week, delivery_date } : o,
+        o.id === order.id ? { ...o, items: nextItems, status: nextStatus } : o,
       ),
     );
     setBusyId(order.id);
 
     const { error: updateError } = await supabase
       .from("orders")
-      .update({ status: next, order_week, delivery_date })
+      .update({ items: nextItems, status: nextStatus })
       .eq("id", order.id);
 
     setBusyId(null);
@@ -207,14 +198,6 @@ export function OfficeDashboard({
       setOrders(previous); // rollback
       setError(`Couldn't update availability: ${updateError.message}`);
     }
-  }
-
-  // Invoice numbers are typed by office staff. Keep local state in sync on every
-  // keystroke (so export/print see the latest) and persist on blur.
-  function updateInvoiceLocal(id: string, invoice_number: string) {
-    setOrders((os) =>
-      os.map((o) => (o.id === id ? { ...o, invoice_number } : o)),
-    );
   }
 
   async function saveInvoice(id: string, rawValue: string) {
@@ -242,8 +225,14 @@ export function OfficeDashboard({
     }
   }
 
+  function updateInvoiceLocal(id: string, invoice_number: string) {
+    setOrders((os) =>
+      os.map((o) => (o.id === id ? { ...o, invoice_number } : o)),
+    );
+  }
+
   function exportCurrentView() {
-    if (filtered.length === 0) {
+    if (sorted.length === 0) {
       setError("No orders match the current filters — nothing to export.");
       return;
     }
@@ -270,7 +259,7 @@ export function OfficeDashboard({
   }
 
   function printCurrentView() {
-    if (filtered.length === 0) {
+    if (sorted.length === 0) {
       setError("No orders match the current filters — nothing to print.");
       return;
     }
@@ -298,6 +287,8 @@ export function OfficeDashboard({
     );
     win.document.close();
   }
+
+  const sortProps = { sortKey, sortDir, onSort: handleSort };
 
   return (
     <div className="space-y-4">
@@ -405,24 +396,32 @@ export function OfficeDashboard({
         Showing {filtered.length} of {orders.length} orders
       </p>
 
-      {/* Orders table */}
+      {/* Orders table — one row per item, order details span the group */}
       <div className="overflow-x-auto border border-[#1A1A1A]/10 bg-white shadow-sm">
-        <table className="w-full min-w-[880px] text-left text-sm">
+        <table className="w-full min-w-[900px] text-left text-sm">
           <thead className="border-b border-[#888888]/25 bg-[#1A1A1A] text-xs uppercase text-white">
             <tr>
-              <SortHeader label="Route" columnKey="route" active={sortKey === "route"} dir={sortDir} onSort={handleSort} />
-              <Th>Products</Th>
-              <SortHeader label="Customer" columnKey="customer" active={sortKey === "customer"} dir={sortDir} onSort={handleSort} />
-              <SortHeader label="Placed by" columnKey="placed_by" active={sortKey === "placed_by"} dir={sortDir} onSort={handleSort} />
-              <SortHeader label="Date needed" columnKey="date_needed" active={sortKey === "date_needed"} dir={sortDir} onSort={handleSort} />
-              <SortHeader label="Delivery" columnKey="delivery" active={sortKey === "delivery"} dir={sortDir} onSort={handleSort} />
-              <SortHeader label="Time placed" columnKey="placed" active={sortKey === "placed"} dir={sortDir} onSort={handleSort} />
-              <SortHeader label="Invoice #" columnKey="invoice" active={sortKey === "invoice"} dir={sortDir} onSort={handleSort} />
-              <SortHeader label="Availability" columnKey="availability" active={sortKey === "availability"} dir={sortDir} onSort={handleSort} />
+              <SortHeader label="Route" columnKey="route" {...sortProps} />
+              <Th>Product</Th>
+              <SortHeader label="Customer" columnKey="customer" {...sortProps} />
+              <SortHeader label="Placed by" columnKey="placed_by" {...sortProps} />
+              <SortHeader
+                label="Date needed"
+                columnKey="date_needed"
+                {...sortProps}
+              />
+              <Th>Delivery</Th>
+              <SortHeader label="Time placed" columnKey="placed" {...sortProps} />
+              <SortHeader label="Invoice #" columnKey="invoice" {...sortProps} />
+              <SortHeader
+                label="Availability"
+                columnKey="availability"
+                {...sortProps}
+              />
             </tr>
           </thead>
           <tbody className="divide-y divide-[#888888]/20">
-            {filtered.length === 0 ? (
+            {sorted.length === 0 ? (
               <tr>
                 <td
                   colSpan={9}
@@ -434,82 +433,96 @@ export function OfficeDashboard({
                 </td>
               </tr>
             ) : (
-              sorted.map((o) => {
-                const busy = busyId === o.id;
+              sorted.flatMap((o) => {
+                const items = o.items;
+                const n = items.length;
                 const locked = isNoCutoffRoute(o.route_number);
-                const deliveryDisplay = getEffectiveDeliveryDate(o);
-                return (
-                  <tr key={o.id} className="hover:bg-[#F5F5F5]">
-                    <Td className="font-semibold text-[#1A1A1A]">
-                      {o.route_number}
-                    </Td>
-                    <Td>
-                      <ul className="max-w-[240px] space-y-0.5">
-                        {(o.items ?? []).map((it, i) => (
-                          <li key={i} className="break-words">
-                            {it.product_name}
-                          </li>
-                        ))}
-                      </ul>
-                    </Td>
-                    <Td>
-                      <div>{o.customer_name}</div>
-                      {o.customer_address && (
+                const busy = busyId === o.id;
+                return items.map((it, idx) => (
+                  <tr
+                    key={`${o.id}:${idx}`}
+                    className={`hover:bg-[#F5F5F5] ${idx === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
+                  >
+                    {idx === 0 && (
+                      <Td
+                        rowSpan={n}
+                        className="align-top font-semibold text-[#1A1A1A]"
+                      >
+                        {o.route_number}
+                      </Td>
+                    )}
+                    <Td className="align-top">
+                      <div className="max-w-[240px] break-words">
+                        {it.product_name}
+                      </div>
+                      {it.quantity > 1 && (
                         <div className="text-xs text-[#888888]">
-                          {o.customer_address}
+                          Qty {it.quantity}
                         </div>
                       )}
                     </Td>
-                    <Td>{o.driver_name ?? "—"}</Td>
-                    <Td>{formatDate(o.date_needed)}</Td>
-                    <Td>
-                      {deliveryDisplay === null ? (
-                        "—"
-                      ) : o.status === "out_of_stock" && o.delivery_date !== null && !locked ? (
-                        <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
-                          <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
-                            {formatDate(shiftWeeks(o.delivery_date, -1))}
-                          </span>
-                          <span className="font-semibold text-[#009ACE]">
-                            {formatDate(o.delivery_date)}
-                          </span>
-                        </span>
-                      ) : (
-                        formatDate(deliveryDisplay)
-                      )}
+                    {idx === 0 && (
+                      <Td rowSpan={n} className="align-top">
+                        <div>{o.customer_name}</div>
+                        {o.customer_address && (
+                          <div className="text-xs text-[#888888]">
+                            {o.customer_address}
+                          </div>
+                        )}
+                      </Td>
+                    )}
+                    {idx === 0 && (
+                      <Td rowSpan={n} className="align-top">
+                        {o.driver_name ?? "—"}
+                      </Td>
+                    )}
+                    {idx === 0 && (
+                      <Td rowSpan={n} className="align-top">
+                        {formatDate(o.date_needed)}
+                      </Td>
+                    )}
+                    <Td className="align-top">
+                      <ItemDelivery order={o} status={it.status} locked={locked} />
                     </Td>
-                    <Td className="whitespace-nowrap">
-                      {formatDateTime(o.created_at)}
-                    </Td>
-                    <Td>
-                      <input
-                        type="text"
-                        value={o.invoice_number ?? ""}
-                        placeholder="Add #"
-                        onFocus={(e) => {
-                          invoiceFocusRef.current = e.target.value;
-                        }}
-                        onChange={(e) =>
-                          updateInvoiceLocal(o.id, e.target.value)
-                        }
-                        onBlur={(e) => saveInvoice(o.id, e.target.value)}
-                        className="h-9 w-28 border border-[#888888]/50 bg-white px-2 text-sm text-[#1A1A1A] outline-none placeholder:text-[#888888] focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
-                      />
-                    </Td>
-                    <Td>
+                    {idx === 0 && (
+                      <Td
+                        rowSpan={n}
+                        className="align-top whitespace-nowrap"
+                      >
+                        {formatDateTime(o.created_at)}
+                      </Td>
+                    )}
+                    {idx === 0 && (
+                      <Td rowSpan={n} className="align-top">
+                        <input
+                          type="text"
+                          value={o.invoice_number ?? ""}
+                          placeholder="Add #"
+                          onFocus={(e) => {
+                            invoiceFocusRef.current = e.target.value;
+                          }}
+                          onChange={(e) =>
+                            updateInvoiceLocal(o.id, e.target.value)
+                          }
+                          onBlur={(e) => saveInvoice(o.id, e.target.value)}
+                          className="h-9 w-28 border border-[#888888]/50 bg-white px-2 text-sm text-[#1A1A1A] outline-none placeholder:text-[#888888] focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                        />
+                      </Td>
+                    )}
+                    <Td className="align-top">
                       {locked ? (
                         <span
                           title="No-cutoff route — automatically in-stock"
                           className="inline-flex"
                         >
-                          <StatusBadge status={o.status} />
+                          <StatusBadge status={it.status} />
                         </span>
                       ) : (
                         <select
-                          value={o.status}
+                          value={it.status}
                           disabled={busy}
                           onChange={(e) =>
-                            setStockStatus(o, e.target.value as OrderStatus)
+                            setItemStatus(o, idx, e.target.value as OrderStatus)
                           }
                           className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
                         >
@@ -522,7 +535,7 @@ export function OfficeDashboard({
                       )}
                     </Td>
                   </tr>
-                );
+                ));
               })
             )}
           </tbody>
@@ -530,6 +543,33 @@ export function OfficeDashboard({
       </div>
     </div>
   );
+}
+
+/** Per-item delivery cell: out-of-stock shows the original struck through. */
+function ItemDelivery({
+  order,
+  status,
+  locked,
+}: {
+  order: OfficeOrder;
+  status: OrderStatus;
+  locked: boolean;
+}) {
+  const base = getBaseDelivery(order);
+  if (base === null) return <>—</>;
+  if (status === "out_of_stock" && !locked) {
+    return (
+      <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+        <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
+          {formatDate(base)}
+        </span>
+        <span className="font-semibold text-[#009ACE]">
+          {formatDate(shiftWeeks(base, 1))}
+        </span>
+      </span>
+    );
+  }
+  return <>{formatDate(base)}</>;
 }
 
 function escapeHtml(value: string): string {
@@ -542,8 +582,8 @@ function escapeHtml(value: string): string {
 
 /**
  * Build a self-contained, branded HTML document for printing the current view.
- * Rendered into a fresh window so it prints cleanly without the app chrome.
- * Auto-invokes the print dialog on load (waits for the logo image via onload).
+ * One row per item so per-item availability + delivery are visible; the order's
+ * shared details repeat down its items.
  */
 function buildPrintHtml(
   orders: OfficeOrder[],
@@ -555,21 +595,40 @@ function buildPrintHtml(
     timeStyle: "short",
   });
 
+  let itemCount = 0;
   const rows = orders
-    .map(
-      (o) => `
-        <tr>
-          <td class="route">${escapeHtml(o.route_number)}</td>
-          <td>${(o.items ?? []).map((it) => escapeHtml(it.product_name)).join("<br>")}</td>
-          <td>${escapeHtml(o.customer_name)}${o.customer_address ? `<br><span class="addr">${escapeHtml(o.customer_address)}</span>` : ""}</td>
-          <td>${escapeHtml(o.driver_name ?? "—")}</td>
-          <td>${escapeHtml(formatDate(o.date_needed))}</td>
-          <td>${getEffectiveDeliveryDate(o) ? escapeHtml(formatDate(getEffectiveDeliveryDate(o)!)) : "—"}</td>
-          <td>${escapeHtml(formatWeekLabel(o.order_week))}</td>
-          <td>${o.invoice_number ? escapeHtml(o.invoice_number) : "—"}</td>
-          <td class="status">${escapeHtml(STATUS_META[o.status].label)}</td>
-        </tr>`,
-    )
+    .map((o) => {
+      const n = o.items.length;
+      return o.items
+        .map((it, idx) => {
+          itemCount++;
+          const delivery = itemDeliveryDate(o, it);
+          const shared =
+            idx === 0
+              ? `
+          <td class="route" rowspan="${n}">${escapeHtml(o.route_number)}</td>`
+              : "";
+          const sharedTail =
+            idx === 0
+              ? `
+          <td rowspan="${n}">${escapeHtml(o.customer_name)}${o.customer_address ? `<br><span class="addr">${escapeHtml(o.customer_address)}</span>` : ""}</td>
+          <td rowspan="${n}">${escapeHtml(o.driver_name ?? "—")}</td>
+          <td rowspan="${n}">${escapeHtml(formatDate(o.date_needed))}</td>`
+              : "";
+          const sharedTail2 =
+            idx === 0
+              ? `
+          <td rowspan="${n}">${o.invoice_number ? escapeHtml(o.invoice_number) : "—"}</td>`
+              : "";
+          return `
+        <tr${idx === 0 ? ' class="order-start"' : ""}>${shared}
+          <td>${escapeHtml(it.product_name)}${it.quantity > 1 ? ` <span class="qty">×${it.quantity}</span>` : ""}</td>${sharedTail}
+          <td>${delivery ? escapeHtml(formatDate(delivery)) : "—"}</td>${sharedTail2}
+          <td class="status">${escapeHtml(STATUS_META[it.status].label)}</td>
+        </tr>`;
+        })
+        .join("");
+    })
     .join("");
 
   const filterLine =
@@ -577,7 +636,7 @@ function buildPrintHtml(
       ? `Filters: ${escapeHtml(activeFilters.join("  •  "))}`
       : "All orders (no filters applied)";
 
-  const count = `${orders.length} order${orders.length === 1 ? "" : "s"}`;
+  const count = `${orders.length} order${orders.length === 1 ? "" : "s"} · ${itemCount} item${itemCount === 1 ? "" : "s"}`;
 
   return `<!doctype html>
 <html lang="en">
@@ -611,9 +670,10 @@ function buildPrintHtml(
     font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
   }
   tbody td { padding: 7px 10px; border-bottom: 1px solid #dddddd; vertical-align: top; }
-  tbody tr:nth-child(even) { background: #F5F5F5; }
+  tbody tr.order-start td { border-top: 2px solid #bbbbbb; }
   td.route { font-weight: 700; }
   td.status { text-transform: capitalize; }
+  .qty { color: #888888; }
   .addr { font-size: 10px; color: #888888; }
   tfoot td { padding-top: 12px; font-size: 11px; color: #888888; }
   @page { size: landscape; margin: 0.5in; }
@@ -635,8 +695,8 @@ function buildPrintHtml(
   <table>
     <thead>
       <tr>
-        <th>Route</th><th>Products</th><th>Customer</th><th>Placed by</th>
-        <th>Date needed</th><th>Delivery</th><th>Order week</th><th>Invoice #</th><th>Availability</th>
+        <th>Route</th><th>Product</th><th>Customer</th><th>Placed by</th>
+        <th>Date needed</th><th>Delivery</th><th>Invoice #</th><th>Availability</th>
       </tr>
     </thead>
     <tbody>${rows}
@@ -710,16 +770,17 @@ function Th({ children }: { children: React.ReactNode }) {
 function SortHeader({
   label,
   columnKey,
-  active,
-  dir,
+  sortKey,
+  sortDir,
   onSort,
 }: {
   label: string;
   columnKey: SortKey;
-  active: boolean;
-  dir: "asc" | "desc";
+  sortKey: SortKey;
+  sortDir: "asc" | "desc";
   onSort: (key: SortKey) => void;
 }) {
+  const active = sortKey === columnKey;
   return (
     <th className="px-4 py-3 font-semibold">
       <button
@@ -732,7 +793,7 @@ function SortHeader({
           aria-hidden
           className={active ? "text-[#009ACE]" : "text-white/30"}
         >
-          {active ? (dir === "asc" ? "▲" : "▼") : "↕"}
+          {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
         </span>
       </button>
     </th>
@@ -742,9 +803,15 @@ function SortHeader({
 function Td({
   children,
   className = "",
+  rowSpan,
 }: {
   children: React.ReactNode;
   className?: string;
+  rowSpan?: number;
 }) {
-  return <td className={`px-4 py-3 text-[#444444] ${className}`}>{children}</td>;
+  return (
+    <td rowSpan={rowSpan} className={`px-4 py-3 text-[#444444] ${className}`}>
+      {children}
+    </td>
+  );
 }

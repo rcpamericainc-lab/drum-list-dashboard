@@ -7,7 +7,12 @@ import { StatusBadge } from "@/components/status-badge";
 import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
-import { summarizeItems } from "@/lib/order-items";
+import {
+  itemDeliveryDate,
+  itemOrderWeek,
+  normalizeItems,
+  summarizeItems,
+} from "@/lib/order-items";
 import {
   computeOrderTiming,
   currentOrderWeek,
@@ -71,19 +76,6 @@ function formatWeekOfOption(weekKey: string): string {
   });
   return `Week of ${label}`;
 }
-
-/** Shift a 'YYYY-MM-DD' key by a whole number of weeks. */
-function shiftWeeks(key: string, weeks: number): string {
-  const d = parseDateKey(key);
-  d.setDate(d.getDate() + weeks * 7);
-  return toDateKey(d);
-}
-
-// An order shown in the route list. `moved` marks the crossed-out "ghost" of an
-// out-of-stock order in its original week (it also shows, un-crossed, in the
-// week it was pushed to — its stored order_week). Derived on the fly, since
-// out-of-stock always means exactly one week forward; nothing is duplicated.
-type OrderEntry = { order: Order; moved: boolean };
 
 type Confirmation = {
   products: string;
@@ -203,18 +195,19 @@ export default function OrderingPage() {
 
     // Freeze the cutoff/delivery timing at submit time.
     const timing = computeOrderTiming(new Date(), routeConfig);
+    // No-cutoff routes (no delivery cutoff) are auto in-stock; the rest start
+    // "open" and wait for the office to set availability per item.
+    const itemStatus: OrderStatus = timing.hasCutoff ? "open" : "in_stock";
     const payload: OrderInsert = {
       route_number: route,
       driver_name: driverName.trim() || null,
-      items: cleanedItems,
+      items: cleanedItems.map((it) => ({ ...it, status: itemStatus })),
       customer_name: customerName.trim(),
       customer_address: customerAddress.trim() || null,
       date_needed: dateNeeded,
       order_week: timing.orderWeek,
       delivery_date: timing.deliveryDate,
-      // No-cutoff routes (no delivery cutoff) are auto in-stock; the rest start
-      // "open" and wait for the office to set availability.
-      status: timing.hasCutoff ? "open" : "in_stock",
+      status: itemStatus,
     };
 
     setSubmitting(true);
@@ -269,21 +262,17 @@ export default function OrderingPage() {
     setDateNeeded("");
   }
 
-  const entries: OrderEntry[] = [];
-  for (const o of orders) {
-    if (filter !== "all" && o.status !== filter) continue;
-    if (o.order_week === weekFilter) {
-      // The order's own (current) week — shown normally.
-      entries.push({ order: o, moved: false });
-    } else if (
-      o.status === "out_of_stock" &&
-      shiftWeeks(o.order_week, -1) === weekFilter
-    ) {
-      // Out of stock: also show a crossed-out ghost in the week it moved from.
-      entries.push({ order: o, moved: true });
+  // An order shows for the selected week if any of its items lands in that week
+  // (out-of-stock items are a week later than in-stock ones). The status filter
+  // matches if any item has that status.
+  const shownOrders = orders.filter((o) => {
+    const items = normalizeItems(o);
+    if (filter !== "all" && !items.some((it) => it.status === filter)) {
+      return false;
     }
-  }
-  const shownCount = entries.length;
+    return items.some((it) => itemOrderWeek(o, it) === weekFilter);
+  });
+  const shownCount = shownOrders.length;
 
   return (
     <main className="min-h-screen bg-[#F5F5F5] px-4 py-5 text-[#1A1A1A]">
@@ -535,7 +524,7 @@ export default function OrderingPage() {
           </div>
 
           <ul className="mt-4 space-y-3">
-            {entries.length === 0 ? (
+            {shownOrders.length === 0 ? (
               <li className="border border-dashed border-[#888888]/50 px-4 py-8 text-center text-sm text-[#888888]">
                 {loadingOrders
                   ? "Loading orders…"
@@ -544,96 +533,56 @@ export default function OrderingPage() {
                     : "No orders match this filter."}
               </li>
             ) : (
-              entries.map(({ order, moved }) =>
-                moved ? (
-                  <li
-                    key={`${order.id}-moved`}
-                    className="border border-dashed border-[#009ACE]/40 bg-[#009ACE]/5 p-4"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-base font-semibold text-[#888888] line-through decoration-[#009ACE] decoration-2">
-                          {summarizeItems(order.items)}
-                        </p>
-                        <p className="truncate text-sm text-[#888888] line-through decoration-[#009ACE]/60">
-                          {order.customer_name}
-                        </p>
-                      </div>
-                      <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#009ACE] bg-white px-2.5 py-1 text-xs font-semibold text-[#006F96]">
-                        <span className="h-1.5 w-1.5 rounded-full bg-[#009ACE]" />
-                        Moved to next week
-                      </span>
-                    </div>
-                    <p className="mt-3 text-sm text-[#006F96]">
-                      Out of stock — now on{" "}
-                      <span className="font-semibold">
-                        {formatWeekLabel(order.order_week)}
-                      </span>
-                      {order.delivery_date && (
-                        <>
-                          {" "}
-                          (delivery{" "}
-                          <span className="font-semibold">
-                            {formatDate(order.delivery_date)}
-                          </span>
-                          )
-                        </>
-                      )}
-                      .
-                    </p>
-                  </li>
-                ) : (
+              shownOrders.map((order) => {
+                const items = normalizeItems(order);
+                return (
                   <li key={order.id} className="border border-[#888888]/25 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <ul className="space-y-0.5">
-                          {(order.items ?? []).map((it, i) => (
-                            <li
-                              key={i}
-                              className="truncate text-base font-semibold text-[#1A1A1A]"
-                            >
+                    <ul className="space-y-1.5">
+                      {items.map((it, i) => {
+                        const delivery = itemDeliveryDate(order, it);
+                        return (
+                          <li
+                            key={i}
+                            className="flex items-start justify-between gap-3"
+                          >
+                            <span className="min-w-0 flex-1 break-words text-base font-semibold text-[#1A1A1A]">
                               {it.product_name}
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="truncate text-sm text-[#444444]">
-                          {order.customer_name}
+                              {it.quantity > 1 && (
+                                <span className="text-[#888888]">
+                                  {" "}
+                                  ×{it.quantity}
+                                </span>
+                              )}
+                            </span>
+                            <span className="flex shrink-0 flex-col items-end gap-1">
+                              <StatusBadge status={it.status} />
+                              {delivery && (
+                                <span className="text-xs text-[#888888]">
+                                  {formatDate(delivery)}
+                                </span>
+                              )}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="mt-3 border-t border-[#888888]/15 pt-2">
+                      <p className="text-sm font-medium text-[#1A1A1A]">
+                        {order.customer_name}
+                      </p>
+                      {order.customer_address && (
+                        <p className="text-xs text-[#888888]">
+                          {order.customer_address}
                         </p>
-                        {order.customer_address && (
-                          <p className="truncate text-xs text-[#888888]">
-                            {order.customer_address}
-                          </p>
-                        )}
-                      </div>
-                      <StatusBadge status={order.status} />
-                    </div>
-                    <dl className="mt-3 grid grid-cols-2 gap-y-1 text-sm text-[#444444]">
-                      <dt className="text-[#888888]">Needed</dt>
-                      <dd className="text-right font-medium text-[#1A1A1A]">
-                        {formatDate(order.date_needed)}
-                      </dd>
-                      <dt className="text-[#888888]">Delivery</dt>
-                      <dd className="text-right font-medium text-[#1A1A1A]">
-                        {order.delivery_date
-                          ? formatDate(order.delivery_date)
-                          : "No cutoff"}
-                      </dd>
-                      <dt className="text-[#888888]">Order week</dt>
-                      <dd className="text-right font-medium text-[#1A1A1A]">
-                        {formatWeekLabel(order.order_week)}
-                      </dd>
-                      {order.driver_name && (
-                        <>
-                          <dt className="text-[#888888]">Placed by</dt>
-                          <dd className="text-right font-medium text-[#1A1A1A]">
-                            {order.driver_name}
-                          </dd>
-                        </>
                       )}
-                    </dl>
+                      <p className="mt-1 text-xs text-[#888888]">
+                        Needed {formatDate(order.date_needed)}
+                        {order.driver_name ? ` · by ${order.driver_name}` : ""}
+                      </p>
+                    </div>
                   </li>
-                ),
-              )
+                );
+              })
             )}
           </ul>
         </section>

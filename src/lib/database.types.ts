@@ -1,7 +1,11 @@
 export type OrderStatus = "open" | "in_stock" | "out_of_stock";
 
-/** A single product line within an order. */
-export type OrderItem = { product_name: string; quantity: number };
+/** A single product line within an order, with its own stock status. */
+export type OrderItem = {
+  product_name: string;
+  quantity: number;
+  status: OrderStatus;
+};
 
 export type Database = {
   public: {

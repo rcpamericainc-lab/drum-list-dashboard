@@ -173,6 +173,13 @@ export function toDateKey(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Shift a 'YYYY-MM-DD' key by a whole number of weeks. */
+export function shiftWeeks(key: string, weeks: number): string {
+  const d = parseDateKey(key);
+  d.setDate(d.getDate() + weeks * 7);
+  return toDateKey(d);
+}
+
 /** Human label for an order-week key, e.g. "Week of Mon, Jul 6, 2026". */
 export function formatWeekLabel(weekKey: string): string {
   const label = parseDateKey(weekKey).toLocaleDateString("en-US", {
