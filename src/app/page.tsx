@@ -436,7 +436,7 @@ export default function OrderingPage() {
                 {items.map((it, i) => (
                   <div
                     key={i}
-                    className="border border-[#888888]/30 bg-[#FAFAFA] p-3"
+                    className="flex items-center gap-2 border border-[#888888]/30 bg-[#FAFAFA] p-3"
                   >
                     <input
                       value={it.product_name}
@@ -447,18 +447,17 @@ export default function OrderingPage() {
                       autoCapitalize="words"
                       enterKeyHint="next"
                       placeholder="e.g. Tire shine, 5-gal"
-                      className="h-14 w-full border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                      className="h-14 min-w-0 flex-1 border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
                     />
                     {items.length > 1 && (
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => removeItem(i)}
-                          className="h-10 px-3 text-sm font-semibold uppercase text-[#888888] hover:bg-[#F5F5F5]"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeItem(i)}
+                        aria-label={`Remove product ${i + 1}`}
+                        className="flex h-14 w-12 shrink-0 items-center justify-center border border-[#888888]/50 bg-white text-2xl leading-none text-[#888888] transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+                      >
+                        <span aria-hidden>×</span>
+                      </button>
                     )}
                   </div>
                 ))}
