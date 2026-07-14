@@ -88,6 +88,44 @@ export function itemMoveLabel(order: Order, item: OrderItem): string | null {
 }
 
 /**
+ * How an item relates to a particular week's driver view:
+ *  - normal:    in-stock/open item delivering that week
+ *  - day_move:  out-of-stock on a no-cutoff route (4/6/14) — stays in its week,
+ *               delivery pushed one day
+ *  - moved_out: out-of-stock week-shift item in its ORIGINAL week — leaving for
+ *               the next week (shown with a slash)
+ *  - moved_in:  the same item in the FOLLOWING week — arrived from last week
+ */
+export type ItemWeekRole = "normal" | "day_move" | "moved_out" | "moved_in";
+
+/** One of an order's items, with its role relative to a given week. `index`
+ * is its position in the order's items array (for stable React keys). */
+export type ItemInWeek = { item: OrderItem; index: number; role: ItemWeekRole };
+
+/**
+ * The items of an order that appear in a given week's driver view, each tagged
+ * with its role. A week-shift out-of-stock item appears in TWO weeks — its
+ * origin week (moved_out) and the following week (moved_in); everything else
+ * appears only in its own week.
+ */
+export function itemsInWeek(order: Order, week: string): ItemInWeek[] {
+  const result: ItemInWeek[] = [];
+  normalizeItems(order).forEach((item, index) => {
+    const outOfStock = item.status === "out_of_stock";
+    if (outOfStock && itemShiftUnit(order.route_number) === "week") {
+      const origin = order.order_week;
+      const dest = shiftWeeks(order.order_week, 1);
+      if (week === origin) result.push({ item, index, role: "moved_out" });
+      else if (week === dest) result.push({ item, index, role: "moved_in" });
+      return;
+    }
+    if (itemOrderWeek(order, item) !== week) return;
+    result.push({ item, index, role: outOfStock ? "day_move" : "normal" });
+  });
+  return result;
+}
+
+/**
  * Order-level rollup, used for the availability filter and the legacy status
  * column: any open item -> open; all one value -> that value; a mix of in/out
  * (no open) -> out_of_stock (not fully ready).

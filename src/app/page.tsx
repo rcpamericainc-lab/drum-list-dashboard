@@ -4,16 +4,19 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 
 import { StatusBadge } from "@/components/status-badge";
-import type { Database, OrderStatus } from "@/lib/database.types";
+import type {
+  Database,
+  OrderItem,
+  OrderStatus,
+} from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
 import {
   getBaseDelivery,
   itemDeliveryDate,
-  itemMoveLabel,
-  itemOrderWeek,
-  normalizeItems,
+  itemsInWeek,
   summarizeItems,
+  type ItemWeekRole,
 } from "@/lib/order-items";
 import {
   computeOrderTiming,
@@ -264,15 +267,17 @@ export default function OrderingPage() {
     setDateNeeded("");
   }
 
-  // An order shows for the selected week if any of its items lands in that week
-  // (out-of-stock items are a week later than in-stock ones). The status filter
-  // matches if any item has that status.
+  // An order shows for the selected week if it has any item in that week's view.
+  // A week-shift out-of-stock item appears in both its origin and next week, so
+  // an order can show in two weeks. The status filter matches if any item shown
+  // for this week has that status.
   const shownOrders = orders.filter((o) => {
-    const items = normalizeItems(o);
-    if (filter !== "all" && !items.some((it) => it.status === filter)) {
+    const weekItems = itemsInWeek(o, weekFilter);
+    if (weekItems.length === 0) return false;
+    if (filter !== "all" && !weekItems.some((wi) => wi.item.status === filter)) {
       return false;
     }
-    return items.some((it) => itemOrderWeek(o, it) === weekFilter);
+    return true;
   });
   const shownCount = shownOrders.length;
 
@@ -535,55 +540,18 @@ export default function OrderingPage() {
               </li>
             ) : (
               shownOrders.map((order) => {
-                const items = normalizeItems(order);
+                const weekItems = itemsInWeek(order, weekFilter);
                 return (
                   <li key={order.id} className="border border-[#888888]/25 p-4">
                     <ul className="space-y-1.5">
-                      {items.map((it, i) => {
-                        const base = getBaseDelivery(order);
-                        const delivery = itemDeliveryDate(order, it);
-                        const moveLabel = itemMoveLabel(order, it);
-                        return (
-                          <li
-                            key={i}
-                            className="flex items-start justify-between gap-3"
-                          >
-                            <span className="min-w-0 flex-1 break-words text-base font-semibold text-[#1A1A1A]">
-                              {it.product_name}
-                              {it.quantity > 1 && (
-                                <span className="text-[#888888]">
-                                  {" "}
-                                  ×{it.quantity}
-                                </span>
-                              )}
-                            </span>
-                            <span className="flex shrink-0 flex-col items-end gap-1">
-                              <StatusBadge status={it.status} />
-                              {moveLabel && base ? (
-                                <span className="flex flex-col items-end">
-                                  <span className="text-xs">
-                                    <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
-                                      {formatDate(base)}
-                                    </span>{" "}
-                                    <span className="font-semibold text-[#009ACE]">
-                                      {formatDate(delivery!)}
-                                    </span>
-                                  </span>
-                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[#009ACE]">
-                                    Moved to {moveLabel}
-                                  </span>
-                                </span>
-                              ) : (
-                                delivery && (
-                                  <span className="text-xs text-[#888888]">
-                                    {formatDate(delivery)}
-                                  </span>
-                                )
-                              )}
-                            </span>
-                          </li>
-                        );
-                      })}
+                      {weekItems.map(({ item, index, role }) => (
+                        <OrderItemRow
+                          key={`${index}:${role}`}
+                          order={order}
+                          item={item}
+                          role={role}
+                        />
+                      ))}
                     </ul>
                     <div className="mt-3 border-t border-[#888888]/15 pt-2">
                       <p className="text-sm font-medium text-[#1A1A1A]">
@@ -607,6 +575,66 @@ export default function OrderingPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+const ROLE_CAPTION: Record<Exclude<ItemWeekRole, "normal">, string> = {
+  day_move: "Moved to next day",
+  moved_out: "Moving to next week",
+  moved_in: "Moved up from last week",
+};
+
+/**
+ * One product line in the driver's order list, framed for the week being
+ * viewed. A "normal" line shows its delivery date; a moved line shows the
+ * original date struck through, the new date, and a caption naming the move
+ * (out to next week, in from last week, or a next-day push for 4/6/14).
+ */
+function OrderItemRow({
+  order,
+  item,
+  role,
+}: {
+  order: Order;
+  item: OrderItem;
+  role: ItemWeekRole;
+}) {
+  const base = getBaseDelivery(order);
+  const delivery = itemDeliveryDate(order, item);
+
+  return (
+    <li className="flex items-start justify-between gap-3">
+      <span className="min-w-0 flex-1 break-words text-base font-semibold text-[#1A1A1A]">
+        {item.product_name}
+        {item.quantity > 1 && (
+          <span className="text-[#888888]"> ×{item.quantity}</span>
+        )}
+      </span>
+      <span className="flex shrink-0 flex-col items-end gap-1">
+        <StatusBadge status={item.status} />
+        {role !== "normal" && base && delivery ? (
+          <span className="flex flex-col items-end">
+            <span className="text-xs">
+              <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
+                {formatDate(base)}
+              </span>{" "}
+              <span className="font-semibold text-[#009ACE]">
+                {formatDate(delivery)}
+              </span>
+            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#009ACE]">
+              {ROLE_CAPTION[role]}
+            </span>
+          </span>
+        ) : (
+          delivery && (
+            <span className="text-xs text-[#888888]">
+              {formatDate(delivery)}
+            </span>
+          )
+        )}
+      </span>
+    </li>
   );
 }
 
