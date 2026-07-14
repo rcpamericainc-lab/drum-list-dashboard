@@ -583,8 +583,8 @@ export function OfficeDashboard({
 
 /**
  * Per-item delivery cell. An out-of-stock item shows its original date struck
- * through, the moved date beside it, and a "next day / next week" tag — the
- * shift size comes from the route (a day for 4/6/14, a week for the rest).
+ * through with the moved date beside it — a week later for cutoff routes, a day
+ * later for the no-cutoff routes (4/6/14).
  */
 function ItemDelivery({
   order,
@@ -595,20 +595,14 @@ function ItemDelivery({
 }) {
   const base = getBaseDelivery(order);
   if (base === null) return <>—</>;
-  const moveLabel = itemMoveLabel(order, item);
-  if (moveLabel) {
+  if (itemMoveLabel(order, item)) {
     return (
-      <span className="inline-flex flex-col gap-0.5">
-        <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
-          <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
-            {formatDate(base)}
-          </span>
-          <span className="font-semibold text-[#009ACE]">
-            {formatDate(itemDeliveryDate(order, item)!)}
-          </span>
+      <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+        <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
+          {formatDate(base)}
         </span>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#009ACE]">
-          Moved · {moveLabel}
+        <span className="font-semibold text-[#009ACE]">
+          {formatDate(itemDeliveryDate(order, item)!)}
         </span>
       </span>
     );
