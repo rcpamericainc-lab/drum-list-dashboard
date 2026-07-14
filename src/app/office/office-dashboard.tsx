@@ -53,6 +53,11 @@ function sortValue(o: OfficeOrder, key: SortKey): string | number {
   }
 }
 
+/** An order counts as invoiced once it has a non-blank invoice number. */
+function hasInvoice(o: OfficeOrder): boolean {
+  return (o.invoice_number ?? "").trim() !== "";
+}
+
 /** "Jul 7, 3:00 PM" — the office computer's local (Eastern) time. */
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -77,6 +82,9 @@ export function OfficeDashboard({
   // Empty = all routes; otherwise the specific routes to show together.
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
+  const [invoiceFilter, setInvoiceFilter] = useState<"all" | "with" | "without">(
+    "all",
+  );
   const [weekFilter, setWeekFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -124,6 +132,8 @@ export function OfficeDashboard({
         selectedRoutes.includes(o.route_number)) &&
       (statusFilter === "all" ||
         o.items.some((it) => it.status === statusFilter)) &&
+      (invoiceFilter === "all" ||
+        (invoiceFilter === "with" ? hasInvoice(o) : !hasInvoice(o))) &&
       (weekFilter === "all" ||
         o.items.some((it) => itemOrderWeek(o, it) === weekFilter)) &&
       (dayFilter === "all" ||
@@ -144,6 +154,7 @@ export function OfficeDashboard({
   const hasFilters =
     selectedRoutes.length > 0 ||
     statusFilter !== "all" ||
+    invoiceFilter !== "all" ||
     weekFilter !== "all" ||
     dayFilter !== "all";
 
@@ -242,6 +253,7 @@ export function OfficeDashboard({
     if (selectedRoutes.length > 0)
       parts.push(`routes-${[...selectedRoutes].sort().join("-")}`);
     if (statusFilter !== "all") parts.push(statusFilter);
+    if (invoiceFilter !== "all") parts.push(`invoice-${invoiceFilter}`);
     if (dayFilter !== "all") parts.push(`day-${dayFilter}`);
     if (weekFilter !== "all") parts.push(`week-${weekFilter}`);
 
@@ -272,6 +284,10 @@ export function OfficeDashboard({
       );
     if (statusFilter !== "all")
       activeFilters.push(`Availability: ${STATUS_META[statusFilter].label}`);
+    if (invoiceFilter !== "all")
+      activeFilters.push(
+        `Invoice: ${invoiceFilter === "with" ? "With invoice #" : "Without invoice #"}`,
+      );
     if (dayFilter !== "all")
       activeFilters.push(`Delivery day: ${formatDate(dayFilter)}`);
     if (weekFilter !== "all")
@@ -330,6 +346,16 @@ export function OfficeDashboard({
             ]}
           />
           <FilterSelect
+            label="Invoice"
+            value={invoiceFilter}
+            onChange={(v) => setInvoiceFilter(v as "all" | "with" | "without")}
+            options={[
+              { value: "all", label: "All" },
+              { value: "with", label: "With invoice #" },
+              { value: "without", label: "Without invoice #" },
+            ]}
+          />
+          <FilterSelect
             label="Delivery day"
             value={dayFilter}
             onChange={setDayFilter}
@@ -353,6 +379,7 @@ export function OfficeDashboard({
               onClick={() => {
                 setSelectedRoutes([]);
                 setStatusFilter("all");
+                setInvoiceFilter("all");
                 setWeekFilter("all");
                 setDayFilter("all");
               }}
