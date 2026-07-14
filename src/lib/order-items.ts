@@ -1,5 +1,5 @@
 import type { Database, OrderItem, OrderStatus } from "@/lib/database.types";
-import { shiftWeeks } from "@/lib/order-week";
+import { shiftDays, shiftWeeks } from "@/lib/order-week";
 import { getRoute } from "@/lib/routes";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
@@ -39,18 +39,52 @@ export function normalizeItems(order: Order): OrderItem[] {
   }));
 }
 
-/** Effective delivery date for one item — out-of-stock shifts a week later. */
+/**
+ * How far an out-of-stock item moves. The cutoff routes deliver on a weekly
+ * schedule, so out-of-stock rolls to the next week. The no-cutoff routes
+ * (4, 6, 14) deliver daily, so out-of-stock rolls to the next day instead.
+ */
+export function itemShiftUnit(routeNumber: string): "week" | "day" {
+  return isNoCutoffRoute(routeNumber) ? "day" : "week";
+}
+
+/** Effective delivery date for one item — out-of-stock shifts by the route's
+ * unit (a week for cutoff routes, a day for no-cutoff routes). */
 export function itemDeliveryDate(order: Order, item: OrderItem): string | null {
   const base = getBaseDelivery(order);
   if (base === null) return null;
-  return item.status === "out_of_stock" ? shiftWeeks(base, 1) : base;
+  if (item.status !== "out_of_stock") return base;
+  return itemShiftUnit(order.route_number) === "day"
+    ? shiftDays(base, 1)
+    : shiftWeeks(base, 1);
 }
 
-/** Effective order-week (Monday) for one item. */
+/**
+ * Effective order-week (Monday) for one item. Only week-shift (cutoff) routes
+ * move to the following week when out of stock; day-shift routes (4, 6, 14)
+ * stay in their original week — the move is a single day, tracked on the
+ * delivery date, not a jump to the next week's view.
+ */
 export function itemOrderWeek(order: Order, item: OrderItem): string {
-  return item.status === "out_of_stock"
-    ? shiftWeeks(order.order_week, 1)
-    : order.order_week;
+  if (
+    item.status === "out_of_stock" &&
+    itemShiftUnit(order.route_number) === "week"
+  ) {
+    return shiftWeeks(order.order_week, 1);
+  }
+  return order.order_week;
+}
+
+/**
+ * Short label for an out-of-stock item's move, e.g. "next day" / "next week",
+ * or null when the item hasn't moved. Used for the "moved" indicator on both
+ * the driver and office views.
+ */
+export function itemMoveLabel(order: Order, item: OrderItem): string | null {
+  if (item.status !== "out_of_stock" || getBaseDelivery(order) === null) {
+    return null;
+  }
+  return itemShiftUnit(order.route_number) === "day" ? "next day" : "next week";
 }
 
 /**

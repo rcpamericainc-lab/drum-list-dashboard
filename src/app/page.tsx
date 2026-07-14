@@ -8,7 +8,9 @@ import type { Database, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
 import {
+  getBaseDelivery,
   itemDeliveryDate,
+  itemMoveLabel,
   itemOrderWeek,
   normalizeItems,
   summarizeItems,
@@ -538,7 +540,9 @@ export default function OrderingPage() {
                   <li key={order.id} className="border border-[#888888]/25 p-4">
                     <ul className="space-y-1.5">
                       {items.map((it, i) => {
+                        const base = getBaseDelivery(order);
                         const delivery = itemDeliveryDate(order, it);
+                        const moveLabel = itemMoveLabel(order, it);
                         return (
                           <li
                             key={i}
@@ -555,10 +559,26 @@ export default function OrderingPage() {
                             </span>
                             <span className="flex shrink-0 flex-col items-end gap-1">
                               <StatusBadge status={it.status} />
-                              {delivery && (
-                                <span className="text-xs text-[#888888]">
-                                  {formatDate(delivery)}
+                              {moveLabel && base ? (
+                                <span className="flex flex-col items-end">
+                                  <span className="text-xs">
+                                    <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
+                                      {formatDate(base)}
+                                    </span>{" "}
+                                    <span className="font-semibold text-[#009ACE]">
+                                      {formatDate(delivery!)}
+                                    </span>
+                                  </span>
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-[#009ACE]">
+                                    Moved to {moveLabel}
+                                  </span>
                                 </span>
+                              ) : (
+                                delivery && (
+                                  <span className="text-xs text-[#888888]">
+                                    {formatDate(delivery)}
+                                  </span>
+                                )
                               )}
                             </span>
                           </li>

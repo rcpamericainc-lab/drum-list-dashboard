@@ -2,16 +2,16 @@
 
 import { useMemo, useRef, useState } from "react";
 
-import { StatusBadge } from "@/components/status-badge";
-import type { Database, OrderStatus } from "@/lib/database.types";
+import type { Database, OrderItem, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ordersToCsv } from "@/lib/csv";
 import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
-import { formatDate, formatWeekLabel, shiftWeeks } from "@/lib/order-week";
+import { formatDate, formatWeekLabel } from "@/lib/order-week";
 import {
   getBaseDelivery,
   isNoCutoffRoute,
   itemDeliveryDate,
+  itemMoveLabel,
   itemOrderWeek,
   normalizeItems,
   rollupStatus,
@@ -56,6 +56,20 @@ function sortValue(o: OfficeOrder, key: SortKey): string | number {
 /** An order counts as invoiced once it has a non-blank invoice number. */
 function hasInvoice(o: OfficeOrder): boolean {
   return (o.invoice_number ?? "").trim() !== "";
+}
+
+/**
+ * Availability options the office can pick for an item. No-cutoff routes
+ * (4, 6, 14) are only ever in-stock or out-of-stock — never "open" — but a
+ * legacy row's current status is kept selectable so it never vanishes.
+ */
+function statusOptionsFor(
+  routeNumber: string,
+  current: OrderStatus,
+): OrderStatus[] {
+  if (!isNoCutoffRoute(routeNumber)) return ORDER_STATUSES;
+  const base: OrderStatus[] = ["in_stock", "out_of_stock"];
+  return base.includes(current) ? base : [current, ...base];
 }
 
 /** "Jul 7, 3:00 PM" — the office computer's local (Eastern) time. */
@@ -463,7 +477,6 @@ export function OfficeDashboard({
               sorted.flatMap((o) => {
                 const items = o.items;
                 const n = items.length;
-                const locked = isNoCutoffRoute(o.route_number);
                 const busy = busyId === o.id;
                 return items.map((it, idx) => (
                   <tr
@@ -509,7 +522,7 @@ export function OfficeDashboard({
                       </Td>
                     )}
                     <Td className="align-top">
-                      <ItemDelivery order={o} status={it.status} locked={locked} />
+                      <ItemDelivery order={o} item={it} />
                     </Td>
                     {idx === 0 && (
                       <Td
@@ -537,29 +550,25 @@ export function OfficeDashboard({
                       </Td>
                     )}
                     <Td className="align-top">
-                      {locked ? (
-                        <span
-                          title="No-cutoff route — automatically in-stock"
-                          className="inline-flex"
-                        >
-                          <StatusBadge status={it.status} />
-                        </span>
-                      ) : (
-                        <select
-                          value={it.status}
-                          disabled={busy}
-                          onChange={(e) =>
-                            setItemStatus(o, idx, e.target.value as OrderStatus)
-                          }
-                          className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
-                        >
-                          {ORDER_STATUSES.map((s) => (
-                            <option key={s} value={s}>
-                              {STATUS_META[s].label}
-                            </option>
-                          ))}
-                        </select>
-                      )}
+                      <select
+                        value={it.status}
+                        disabled={busy}
+                        title={
+                          isNoCutoffRoute(o.route_number)
+                            ? "No-cutoff route — out-of-stock moves to the next day"
+                            : undefined
+                        }
+                        onChange={(e) =>
+                          setItemStatus(o, idx, e.target.value as OrderStatus)
+                        }
+                        className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
+                      >
+                        {statusOptionsFor(o.route_number, it.status).map((s) => (
+                          <option key={s} value={s}>
+                            {STATUS_META[s].label}
+                          </option>
+                        ))}
+                      </select>
                     </Td>
                   </tr>
                 ));
@@ -572,26 +581,34 @@ export function OfficeDashboard({
   );
 }
 
-/** Per-item delivery cell: out-of-stock shows the original struck through. */
+/**
+ * Per-item delivery cell. An out-of-stock item shows its original date struck
+ * through, the moved date beside it, and a "next day / next week" tag — the
+ * shift size comes from the route (a day for 4/6/14, a week for the rest).
+ */
 function ItemDelivery({
   order,
-  status,
-  locked,
+  item,
 }: {
   order: OfficeOrder;
-  status: OrderStatus;
-  locked: boolean;
+  item: OrderItem;
 }) {
   const base = getBaseDelivery(order);
   if (base === null) return <>—</>;
-  if (status === "out_of_stock" && !locked) {
+  const moveLabel = itemMoveLabel(order, item);
+  if (moveLabel) {
     return (
-      <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
-        <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
-          {formatDate(base)}
+      <span className="inline-flex flex-col gap-0.5">
+        <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+          <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
+            {formatDate(base)}
+          </span>
+          <span className="font-semibold text-[#009ACE]">
+            {formatDate(itemDeliveryDate(order, item)!)}
+          </span>
         </span>
-        <span className="font-semibold text-[#009ACE]">
-          {formatDate(shiftWeeks(base, 1))}
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#009ACE]">
+          Moved · {moveLabel}
         </span>
       </span>
     );
