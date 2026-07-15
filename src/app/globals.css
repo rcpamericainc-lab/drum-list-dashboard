@@ -20,6 +20,9 @@
   --color-brand-dark-gray: var(--brand-dark-gray);
   --font-sans: var(--font-inter);
   --font-display: var(--font-anton);
+  /* One step above Tailwind's 7xl (80rem) so the office dashboard's wide table
+     has more room. Powers max-w-8xl. */
+  --container-8xl: 90rem;
 }
 
 body {

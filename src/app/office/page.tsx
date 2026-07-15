@@ -16,7 +16,7 @@ export default async function OfficePage() {
 
   return (
     <main className="min-h-screen bg-[#F5F5F5] px-6 py-8 text-[#1A1A1A]">
-      <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-4">
+      <div className="mx-auto flex w-full max-w-8xl items-center justify-between gap-4">
         <div className="min-w-0">
           <Image
             src="/rcp-america-wordmark.png"
@@ -35,7 +35,7 @@ export default async function OfficePage() {
         </div>
       </div>
 
-      <div className="mx-auto mt-6 w-full max-w-7xl">
+      <div className="mx-auto mt-6 w-full max-w-8xl">
         <OfficeDashboard initialOrders={orders ?? []} />
       </div>
     </main>
