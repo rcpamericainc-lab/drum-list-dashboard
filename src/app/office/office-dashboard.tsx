@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 
+import { ItemStatusBadge } from "@/components/item-status-badge";
 import type { Database, OrderItem, OrderStatus } from "@/lib/database.types";
 import { createClient } from "@/lib/supabase/browser";
 import { ordersToCsv } from "@/lib/csv";
@@ -9,11 +10,14 @@ import { ORDER_STATUSES, STATUS_META } from "@/lib/order-status";
 import { formatDate, formatWeekLabel } from "@/lib/order-week";
 import {
   getBaseDelivery,
+  isCancelled,
+  isFulfilled,
   isNoCutoffRoute,
   itemDeliveryDate,
   itemMoveLabel,
   itemOrderWeek,
   normalizeItems,
+  returningQty,
   rollupStatus,
 } from "@/lib/order-items";
 
@@ -101,6 +105,12 @@ export function OfficeDashboard({
   );
   const [weekFilter, setWeekFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState("all");
+  const [fulfillmentFilter, setFulfillmentFilter] = useState<
+    "all" | "pending" | "fulfilled" | "cancelled"
+  >("all");
+  const [returnsFilter, setReturnsFilter] = useState<"all" | "has_returns">(
+    "all",
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("placed");
@@ -151,7 +161,15 @@ export function OfficeDashboard({
       (weekFilter === "all" ||
         o.items.some((it) => itemOrderWeek(o, it) === weekFilter)) &&
       (dayFilter === "all" ||
-        o.items.some((it) => itemDeliveryDate(o, it) === dayFilter)),
+        o.items.some((it) => itemDeliveryDate(o, it) === dayFilter)) &&
+      (fulfillmentFilter === "all" ||
+        o.items.some((it) =>
+          fulfillmentFilter === "pending"
+            ? it.fulfillment == null
+            : it.fulfillment === fulfillmentFilter,
+        )) &&
+      (returnsFilter === "all" ||
+        o.items.some((it) => returningQty(it) > 0)),
   );
 
   const sorted = [...filtered].sort((a, b) => {
@@ -170,7 +188,9 @@ export function OfficeDashboard({
     statusFilter !== "all" ||
     invoiceFilter !== "all" ||
     weekFilter !== "all" ||
-    dayFilter !== "all";
+    dayFilter !== "all" ||
+    fulfillmentFilter !== "all" ||
+    returnsFilter !== "all";
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -189,22 +209,15 @@ export function OfficeDashboard({
     );
   }
 
-  // Set one item's availability. Dates stay at their base; the out-of-stock
-  // shift is derived per item at display time. The order's rollup status is
-  // recomputed so the availability filter and exports stay accurate.
-  async function setItemStatus(
+  // Persist a new items array for an order. Optimistic update + rollback; the
+  // rollup status is recomputed so the availability filter/exports stay right.
+  async function persistItems(
     order: OfficeOrder,
-    index: number,
-    next: OrderStatus,
+    nextItems: OrderItem[],
+    failMessage: string,
   ) {
-    if (order.items[index]?.status === next) return;
     setError(null);
-
-    const nextItems = order.items.map((it, i) =>
-      i === index ? { ...it, status: next } : it,
-    );
     const nextStatus = rollupStatus(nextItems);
-
     const previous = orders;
     setOrders((os) =>
       os.map((o) =>
@@ -221,8 +234,39 @@ export function OfficeDashboard({
     setBusyId(null);
     if (updateError) {
       setOrders(previous); // rollback
-      setError(`Couldn't update availability: ${updateError.message}`);
+      setError(`${failMessage}: ${updateError.message}`);
     }
+  }
+
+  // Set one item's stock availability. Dates stay at their base; the
+  // out-of-stock shift is derived per item at display time.
+  function setItemStatus(order: OfficeOrder, index: number, next: OrderStatus) {
+    if (order.items[index]?.status === next) return;
+    const nextItems = order.items.map((it, i) =>
+      i === index ? { ...it, status: next } : it,
+    );
+    persistItems(order, nextItems, "Couldn't update availability");
+  }
+
+  // Cancel (soft-retire) or restore items — office only. Cancelling sets
+  // fulfillment to "cancelled"; restoring clears it back to pending. `indices`
+  // is a list of item positions, or "all" for the whole order.
+  function setItemsCancelled(
+    order: OfficeOrder,
+    indices: number[] | "all",
+    cancelled: boolean,
+  ) {
+    const hit = (i: number) => indices === "all" || indices.includes(i);
+    const nextItems: OrderItem[] = order.items.map((it, i) =>
+      hit(i)
+        ? { ...it, fulfillment: cancelled ? ("cancelled" as const) : null }
+        : it,
+    );
+    persistItems(
+      order,
+      nextItems,
+      cancelled ? "Couldn't cancel" : "Couldn't restore",
+    );
   }
 
   async function saveInvoice(id: string, rawValue: string) {
@@ -268,6 +312,8 @@ export function OfficeDashboard({
       parts.push(`routes-${[...selectedRoutes].sort().join("-")}`);
     if (statusFilter !== "all") parts.push(statusFilter);
     if (invoiceFilter !== "all") parts.push(`invoice-${invoiceFilter}`);
+    if (fulfillmentFilter !== "all") parts.push(fulfillmentFilter);
+    if (returnsFilter !== "all") parts.push("returns");
     if (dayFilter !== "all") parts.push(`day-${dayFilter}`);
     if (weekFilter !== "all") parts.push(`week-${weekFilter}`);
 
@@ -302,6 +348,11 @@ export function OfficeDashboard({
       activeFilters.push(
         `Invoice: ${invoiceFilter === "with" ? "With invoice #" : "Without invoice #"}`,
       );
+    if (fulfillmentFilter !== "all")
+      activeFilters.push(
+        `Fulfillment: ${fulfillmentFilter[0].toUpperCase()}${fulfillmentFilter.slice(1)}`,
+      );
+    if (returnsFilter !== "all") activeFilters.push("Has returns");
     if (dayFilter !== "all")
       activeFilters.push(`Delivery day: ${formatDate(dayFilter)}`);
     if (weekFilter !== "all")
@@ -387,6 +438,30 @@ export function OfficeDashboard({
               ...weeks.map((w) => ({ value: w, label: formatWeekLabel(w) })),
             ]}
           />
+          <FilterSelect
+            label="Fulfillment"
+            value={fulfillmentFilter}
+            onChange={(v) =>
+              setFulfillmentFilter(
+                v as "all" | "pending" | "fulfilled" | "cancelled",
+              )
+            }
+            options={[
+              { value: "all", label: "All" },
+              { value: "pending", label: "Pending" },
+              { value: "fulfilled", label: "Fulfilled" },
+              { value: "cancelled", label: "Cancelled" },
+            ]}
+          />
+          <FilterSelect
+            label="Returns"
+            value={returnsFilter}
+            onChange={(v) => setReturnsFilter(v as "all" | "has_returns")}
+            options={[
+              { value: "all", label: "All" },
+              { value: "has_returns", label: "Has returns" },
+            ]}
+          />
           {hasFilters && (
             <button
               type="button"
@@ -396,6 +471,8 @@ export function OfficeDashboard({
                 setInvoiceFilter("all");
                 setWeekFilter("all");
                 setDayFilter("all");
+                setFulfillmentFilter("all");
+                setReturnsFilter("all");
               }}
               className="ml-auto h-10 border border-[#888888]/40 bg-white px-3 text-sm font-semibold uppercase text-[#444444] hover:bg-[#F5F5F5]"
             >
@@ -459,13 +536,14 @@ export function OfficeDashboard({
                 columnKey="availability"
                 {...sortProps}
               />
+              <Th>Fulfillment</Th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#888888]/20">
             {sorted.length === 0 ? (
               <tr>
                 <td
-                  colSpan={9}
+                  colSpan={10}
                   className="px-4 py-12 text-center text-[#888888]"
                 >
                   {orders.length === 0
@@ -478,6 +556,7 @@ export function OfficeDashboard({
                 const items = o.items;
                 const n = items.length;
                 const busy = busyId === o.id;
+                const allCancelled = items.length > 0 && items.every(isCancelled);
                 return items.map((it, idx) => (
                   <tr
                     key={`${o.id}:${idx}`}
@@ -509,6 +588,16 @@ export function OfficeDashboard({
                             {o.customer_address}
                           </div>
                         )}
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            setItemsCancelled(o, "all", !allCancelled)
+                          }
+                          className="mt-1 text-xs font-semibold uppercase text-[#888888] underline-offset-2 hover:text-[#B00020] hover:underline disabled:opacity-50"
+                        >
+                          {allCancelled ? "Restore order" : "Cancel order"}
+                        </button>
                       </Td>
                     )}
                     {idx === 0 && (
@@ -550,25 +639,41 @@ export function OfficeDashboard({
                       </Td>
                     )}
                     <Td className="align-top">
-                      <select
-                        value={it.status}
-                        disabled={busy}
-                        title={
-                          isNoCutoffRoute(o.route_number)
-                            ? "No-cutoff route — out-of-stock moves to the next day"
-                            : undefined
-                        }
-                        onChange={(e) =>
-                          setItemStatus(o, idx, e.target.value as OrderStatus)
-                        }
-                        className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
-                      >
-                        {statusOptionsFor(o.route_number, it.status).map((s) => (
-                          <option key={s} value={s}>
-                            {STATUS_META[s].label}
-                          </option>
-                        ))}
-                      </select>
+                      {isCancelled(it) ? (
+                        <span className="text-xs text-[#888888]">
+                          {STATUS_META[it.status].label}
+                        </span>
+                      ) : (
+                        <select
+                          value={it.status}
+                          disabled={busy}
+                          title={
+                            isNoCutoffRoute(o.route_number)
+                              ? "No-cutoff route — out-of-stock moves to the next day"
+                              : undefined
+                          }
+                          onChange={(e) =>
+                            setItemStatus(o, idx, e.target.value as OrderStatus)
+                          }
+                          className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
+                        >
+                          {statusOptionsFor(o.route_number, it.status).map(
+                            (s) => (
+                              <option key={s} value={s}>
+                                {STATUS_META[s].label}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      )}
+                    </Td>
+                    <Td className="align-top">
+                      <ItemFulfillment
+                        item={it}
+                        busy={busy}
+                        onCancel={() => setItemsCancelled(o, [idx], true)}
+                        onRestore={() => setItemsCancelled(o, [idx], false)}
+                      />
                     </Td>
                   </tr>
                 ));
@@ -577,6 +682,58 @@ export function OfficeDashboard({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Per-item fulfillment cell: the driver's delivery report (Fulfilled with the
+ * delivered/returning counts and any note) or a muted "Pending", plus the
+ * office-only Cancel/Restore control.
+ */
+function ItemFulfillment({
+  item,
+  busy,
+  onCancel,
+  onRestore,
+}: {
+  item: OrderItem;
+  busy: boolean;
+  onCancel: () => void;
+  onRestore: () => void;
+}) {
+  const returning = returningQty(item);
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {item.fulfillment ? (
+        <ItemStatusBadge item={item} />
+      ) : (
+        <span className="text-xs font-medium text-[#888888]">Pending</span>
+      )}
+      {isFulfilled(item) && item.quantity_fulfilled != null && (
+        <span className="text-xs text-[#444444]">
+          {item.quantity_fulfilled} of {item.quantity} delivered
+          {returning > 0 && (
+            <span className="font-semibold text-[#B00020]">
+              {" · "}
+              {returning} returning
+            </span>
+          )}
+        </span>
+      )}
+      {item.note && (
+        <span className="max-w-[220px] break-words text-xs italic text-[#888888]">
+          “{item.note}”
+        </span>
+      )}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={isCancelled(item) ? onRestore : onCancel}
+        className="text-xs font-semibold uppercase text-[#888888] underline-offset-2 hover:text-[#B00020] hover:underline disabled:opacity-50"
+      >
+        {isCancelled(item) ? "Restore" : "Cancel"}
+      </button>
     </div>
   );
 }
@@ -658,11 +815,24 @@ function buildPrintHtml(
               ? `
           <td rowspan="${n}">${o.invoice_number ? escapeHtml(o.invoice_number) : "—"}</td>`
               : "";
+          const returning = returningQty(it);
+          const fulfillmentCell = isCancelled(it)
+            ? "Cancelled"
+            : isFulfilled(it)
+              ? `Fulfilled${
+                  it.quantity_fulfilled != null
+                    ? ` (${it.quantity_fulfilled} of ${it.quantity})`
+                    : ""
+                }${returning > 0 ? `<br><span class="back">${returning} returning</span>` : ""}${
+                  it.note ? `<br><span class="addr">${escapeHtml(it.note)}</span>` : ""
+                }`
+              : "Pending";
           return `
         <tr${idx === 0 ? ' class="order-start"' : ""}>${shared}
           <td>${escapeHtml(it.product_name)}${it.quantity > 1 ? ` <span class="qty">×${it.quantity}</span>` : ""}</td>${sharedTail}
           <td>${delivery ? escapeHtml(formatDate(delivery)) : "—"}</td>${sharedTail2}
           <td class="status">${escapeHtml(STATUS_META[it.status].label)}</td>
+          <td>${fulfillmentCell}</td>
         </tr>`;
         })
         .join("");
@@ -713,6 +883,7 @@ function buildPrintHtml(
   td.status { text-transform: capitalize; }
   .qty { color: #888888; }
   .addr { font-size: 10px; color: #888888; }
+  .back { font-size: 10px; font-weight: 700; color: #B00020; }
   tfoot td { padding-top: 12px; font-size: 11px; color: #888888; }
   @page { size: landscape; margin: 0.5in; }
 </style>
@@ -735,6 +906,7 @@ function buildPrintHtml(
       <tr>
         <th>Route</th><th>Product</th><th>Customer</th><th>Placed by</th>
         <th>Date needed</th><th>Delivery</th><th>Invoice #</th><th>Availability</th>
+        <th>Fulfillment</th>
       </tr>
     </thead>
     <tbody>${rows}

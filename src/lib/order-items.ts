@@ -48,6 +48,33 @@ export function itemShiftUnit(routeNumber: string): "week" | "day" {
   return isNoCutoffRoute(routeNumber) ? "day" : "week";
 }
 
+/** An item the office has cancelled (soft-retired). */
+export function isCancelled(item: OrderItem): boolean {
+  return item.fulfillment === "cancelled";
+}
+
+/** An item the driver has marked delivered. */
+export function isFulfilled(item: OrderItem): boolean {
+  return item.fulfillment === "fulfilled";
+}
+
+/** Fulfilled or cancelled — a terminal state that ends the item's lifecycle. */
+export function isTerminal(item: OrderItem): boolean {
+  return item.fulfillment === "fulfilled" || item.fulfillment === "cancelled";
+}
+
+/**
+ * How many units of a fulfilled item are returning to the warehouse — the gap
+ * between what was ordered and what actually went to the customer. 0 for items
+ * that aren't fulfilled or were delivered in full.
+ */
+export function returningQty(item: OrderItem): number {
+  if (item.fulfillment !== "fulfilled" || item.quantity_fulfilled == null) {
+    return 0;
+  }
+  return Math.max(0, item.quantity - item.quantity_fulfilled);
+}
+
 /** Effective delivery date for one item — out-of-stock shifts by the route's
  * unit (a week for cutoff routes, a day for no-cutoff routes). */
 export function itemDeliveryDate(order: Order, item: OrderItem): string | null {
@@ -111,6 +138,14 @@ export type ItemInWeek = { item: OrderItem; index: number; role: ItemWeekRole };
 export function itemsInWeek(order: Order, week: string): ItemInWeek[] {
   const result: ItemInWeek[] = [];
   normalizeItems(order).forEach((item, index) => {
+    // Terminal items (fulfilled/cancelled) are resolved — show them once, in
+    // their settled week, with no "moving" split.
+    if (isTerminal(item)) {
+      if (itemOrderWeek(order, item) === week) {
+        result.push({ item, index, role: "normal" });
+      }
+      return;
+    }
     const outOfStock = item.status === "out_of_stock";
     if (outOfStock && itemShiftUnit(order.route_number) === "week") {
       const origin = order.order_week;

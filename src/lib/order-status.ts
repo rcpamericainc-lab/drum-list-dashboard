@@ -1,4 +1,4 @@
-import type { OrderStatus } from "@/lib/database.types";
+import type { FulfillmentStatus, OrderStatus } from "@/lib/database.types";
 
 /**
  * Stock/availability state the office sets on each order:
@@ -36,5 +36,23 @@ export const STATUS_META: Record<OrderStatus, StatusMeta> = {
     label: "Out-of-Stock",
     badge: "bg-[#1A1A1A] text-white border-[#1A1A1A]",
     dot: "bg-[#009ACE]",
+  },
+};
+
+/**
+ * Fulfillment badges, shown in place of the stock badge once an item reaches a
+ * terminal state: `fulfilled` (green) when it got to the customer, `cancelled`
+ * (muted gray) when the office retired it.
+ */
+export const FULFILLMENT_META: Record<FulfillmentStatus, StatusMeta> = {
+  fulfilled: {
+    label: "Fulfilled",
+    badge: "bg-[#1F7A4D] text-white border-[#1F7A4D]",
+    dot: "bg-white",
+  },
+  cancelled: {
+    label: "Cancelled",
+    badge: "bg-[#6B6B6B] text-white border-[#6B6B6B]",
+    dot: "bg-white",
   },
 };

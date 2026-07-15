@@ -1,10 +1,27 @@
 export type OrderStatus = "open" | "in_stock" | "out_of_stock";
 
-/** A single product line within an order, with its own stock status. */
+/**
+ * Fulfillment outcome for an item, on a separate axis from stock `status`.
+ * Absent/null means "pending" (not yet delivered). `fulfilled` is set by the
+ * driver when the item reaches the customer; `cancelled` is set by the office
+ * (a soft retire — there is no hard delete).
+ */
+export type FulfillmentStatus = "fulfilled" | "cancelled";
+
+/**
+ * A single product line within an order.
+ *  - status: stock availability (office-owned) — drives the delivery shift.
+ *  - fulfillment/quantity_fulfilled/note: fulfillment axis. quantity_fulfilled
+ *    is how many actually went to the customer once fulfilled (the rest are
+ *    returning to the warehouse); note is optional driver context.
+ */
 export type OrderItem = {
   product_name: string;
   quantity: number;
   status: OrderStatus;
+  fulfillment?: FulfillmentStatus | null;
+  quantity_fulfilled?: number | null;
+  note?: string | null;
 };
 
 export type Database = {
