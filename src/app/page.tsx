@@ -427,33 +427,55 @@ export default function OrderingPage() {
               <span className="text-sm font-medium text-[#444444]">
                 Products
               </span>
+              <p className="mt-1 text-sm text-[#888888]">
+                Set how many of each product the customer needs. The office and
+                warehouse use these counts to pull and load stock, and on the
+                route the driver confirms how many were delivered — anything
+                short is tracked as returning to the warehouse.
+              </p>
               <div className="mt-1.5 space-y-3">
                 {items.map((it, i) => (
                   <div
                     key={i}
-                    className="flex items-center gap-2 border border-[#888888]/30 bg-[#FAFAFA] p-3"
+                    className="border border-[#888888]/30 bg-[#FAFAFA] p-3"
                   >
-                    <input
-                      value={it.product_name}
-                      onChange={(e) =>
-                        updateItem(i, { product_name: e.target.value })
-                      }
-                      type="text"
-                      autoCapitalize="words"
-                      enterKeyHint="next"
-                      placeholder="e.g. Tire shine, 5-gal"
-                      className="h-14 min-w-0 flex-1 border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
-                    />
-                    {items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeItem(i)}
-                        aria-label={`Remove product ${i + 1}`}
-                        className="flex h-14 w-12 shrink-0 items-center justify-center border border-[#888888]/50 bg-white text-2xl leading-none text-[#888888] transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <span aria-hidden>×</span>
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={it.product_name}
+                        onChange={(e) =>
+                          updateItem(i, { product_name: e.target.value })
+                        }
+                        type="text"
+                        autoCapitalize="words"
+                        enterKeyHint="next"
+                        placeholder="e.g. Tire shine, 5-gal"
+                        className="h-14 min-w-0 flex-1 border border-[#888888]/50 bg-white px-4 text-lg text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                      />
+                      {items.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeItem(i)}
+                          aria-label={`Remove product ${i + 1}`}
+                          className="flex h-14 w-12 shrink-0 items-center justify-center border border-[#888888]/50 bg-white text-2xl leading-none text-[#888888] transition hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <span aria-hidden>×</span>
+                        </button>
+                      )}
+                    </div>
+                    <label className="mt-2 flex items-center gap-2 text-sm font-medium text-[#444444]">
+                      Qty
+                      <input
+                        value={it.quantity}
+                        onChange={(e) =>
+                          updateItem(i, { quantity: Number(e.target.value) })
+                        }
+                        type="number"
+                        min={1}
+                        inputMode="numeric"
+                        aria-label={`Quantity for product ${i + 1}`}
+                        className="h-11 w-24 border border-[#888888]/50 bg-white px-3 text-base text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+                      />
+                    </label>
                   </div>
                 ))}
               </div>
