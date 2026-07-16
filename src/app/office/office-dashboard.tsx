@@ -104,6 +104,8 @@ export function OfficeDashboard({
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("placed");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [pageSize, setPageSize] = useState(25);
+  const [page, setPage] = useState(1);
   // The invoice value when an input was focused, so we can skip no-op saves and
   // roll back to it if the write fails.
   const invoiceFocusRef = useRef("");
@@ -182,6 +184,30 @@ export function OfficeDashboard({
     dayFilter !== "all" ||
     fulfillmentFilter !== "all" ||
     returnsFilter !== "all";
+
+  // Pagination. Reset to page 1 whenever the filter set changes, using React's
+  // adjust-state-during-render pattern (no effect, so no cascading renders).
+  const filterKey = JSON.stringify([
+    [...selectedRoutes].sort(),
+    statusFilter,
+    invoiceFilter,
+    weekFilter,
+    dayFilter,
+    fulfillmentFilter,
+    returnsFilter,
+    pageSize,
+  ]);
+  const [lastFilterKey, setLastFilterKey] = useState(filterKey);
+  if (filterKey !== lastFilterKey) {
+    setLastFilterKey(filterKey);
+    setPage(1);
+  }
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageOrders = sorted.slice(pageStart, pageStart + pageSize);
+  const rangeStart = sorted.length === 0 ? 0 : pageStart + 1;
+  const rangeEnd = pageStart + pageOrders.length;
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {
@@ -517,9 +543,25 @@ export function OfficeDashboard({
         </p>
       )}
 
-      <p className="text-sm font-medium text-[#888888]">
-        Showing {filtered.length} of {orders.length} orders
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-medium text-[#888888]">
+          Showing{" "}
+          <span className="text-[#1A1A1A]">
+            {rangeStart}–{rangeEnd}
+          </span>{" "}
+          of {filtered.length} matching · {orders.length} total
+        </p>
+        <PaginationBar
+          page={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          onPage={setPage}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setPage(1);
+          }}
+        />
+      </div>
 
       {/* Orders table — one row per item, order details span the group */}
       <div className="overflow-x-auto border border-[#1A1A1A]/10 bg-white shadow-sm">
@@ -559,7 +601,7 @@ export function OfficeDashboard({
                 </td>
               </tr>
             ) : (
-              sorted.flatMap((o) => {
+              pageOrders.flatMap((o) => {
                 const items = o.items;
                 const n = items.length;
                 const busy = busyId === o.id;
@@ -687,6 +729,76 @@ export function OfficeDashboard({
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex justify-end">
+          <PaginationBar
+            page={currentPage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            onPage={setPage}
+            onPageSize={(n) => {
+              setPageSize(n);
+              setPage(1);
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const PAGE_SIZES = [25, 50, 100];
+
+/** Prev/next pager with a page indicator and a rows-per-page selector. */
+function PaginationBar({
+  page,
+  totalPages,
+  pageSize,
+  onPage,
+  onPageSize,
+}: {
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  onPage: (updater: (p: number) => number) => void;
+  onPageSize: (n: number) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onPage((p) => Math.max(1, p - 1))}
+        disabled={page <= 1}
+        className="h-9 border border-[#888888]/40 bg-white px-3 text-sm font-semibold uppercase text-[#444444] transition hover:bg-[#F5F5F5] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        ‹ Prev
+      </button>
+      <span className="px-1 text-sm font-medium text-[#444444]">
+        Page {page} of {totalPages}
+      </span>
+      <button
+        type="button"
+        onClick={() => onPage((p) => Math.min(totalPages, p + 1))}
+        disabled={page >= totalPages}
+        className="h-9 border border-[#888888]/40 bg-white px-3 text-sm font-semibold uppercase text-[#444444] transition hover:bg-[#F5F5F5] disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Next ›
+      </button>
+      <label className="ml-2 flex items-center gap-1.5 text-sm text-[#888888]">
+        Rows
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSize(Number(e.target.value))}
+          className="h-9 border border-[#888888]/50 bg-white px-2 text-sm text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
+        >
+          {PAGE_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }
