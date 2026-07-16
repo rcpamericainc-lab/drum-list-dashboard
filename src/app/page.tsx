@@ -611,9 +611,9 @@ export default function OrderingPage() {
 }
 
 const ROLE_CAPTION: Record<Exclude<ItemWeekRole, "normal">, string> = {
-  day_move: "Moved to next day",
-  moved_out: "Moving to next week",
-  moved_in: "Moved up from last week",
+  day_move: "Moved to a later day",
+  moved_out: "Moving to a later week",
+  moved_in: "Moved up from an earlier week",
 };
 
 /** One editable row in the delivery-report sheet. */

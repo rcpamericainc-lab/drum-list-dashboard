@@ -10,7 +10,11 @@ export type FulfillmentStatus = "fulfilled" | "cancelled";
 
 /**
  * A single product line within an order.
- *  - status: stock availability (office-owned) — drives the delivery shift.
+ *  - status: stock availability (office-owned).
+ *  - bumps: how many times the office has pushed this item forward (each
+ *    out-of-stock bumps it one unit — a day for routes 4/6/14, a week for the
+ *    rest — and reopens it). 0/absent means it's on its original date. The
+ *    scheduled date is derived as the original shifted by `bumps`.
  *  - fulfillment/quantity_fulfilled/note: fulfillment axis. quantity_fulfilled
  *    is how many actually went to the customer once fulfilled (the rest are
  *    returning to the warehouse); note is optional driver context.
@@ -19,6 +23,7 @@ export type OrderItem = {
   product_name: string;
   quantity: number;
   status: OrderStatus;
+  bumps?: number | null;
   fulfillment?: FulfillmentStatus | null;
   quantity_fulfilled?: number | null;
   note?: string | null;

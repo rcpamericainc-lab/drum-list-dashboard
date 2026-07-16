@@ -29,14 +29,23 @@ export function getBaseDelivery(order: Order): string | null {
 }
 
 /**
- * Ensure every item has a status. Pre-migration rows carry status only at the
- * order level, so missing item statuses fall back to the order's status.
+ * Normalize items to the current model:
+ *  - Pre-item-status rows carry status only at the order level, so a missing
+ *    item status falls back to the order's status.
+ *  - The old model stored a resting "out_of_stock" that meant "moved one unit
+ *    forward." The new model reopens after each move and counts moves in
+ *    `bumps`, and never rests on out_of_stock. So a legacy resting out_of_stock
+ *    is converted to open + one extra bump. This lazily migrates old rows on
+ *    read; they persist in the new shape the next time the order is saved.
  */
 export function normalizeItems(order: Order): OrderItem[] {
-  return (order.items ?? []).map((it) => ({
-    ...it,
-    status: it.status ?? order.status,
-  }));
+  return (order.items ?? []).map((it) => {
+    const status = it.status ?? order.status;
+    if (status === "out_of_stock") {
+      return { ...it, status: "open" as const, bumps: (it.bumps ?? 0) + 1 };
+    }
+    return { ...it, status };
+  });
 }
 
 /**
@@ -75,53 +84,69 @@ export function returningQty(item: OrderItem): number {
   return Math.max(0, item.quantity - item.quantity_fulfilled);
 }
 
-/** Effective delivery date for one item — out-of-stock shifts by the route's
- * unit (a week for cutoff routes, a day for no-cutoff routes). */
-export function itemDeliveryDate(order: Order, item: OrderItem): string | null {
-  const base = getBaseDelivery(order);
-  if (base === null) return null;
-  if (item.status !== "out_of_stock") return base;
-  return itemShiftUnit(order.route_number) === "day"
-    ? shiftDays(base, 1)
-    : shiftWeeks(base, 1);
+/** How many times the office has pushed this item forward (never negative). */
+export function itemBumps(item: OrderItem): number {
+  return Math.max(0, Math.floor(item.bumps ?? 0));
+}
+
+/** An item that has been pushed forward at least once. */
+export function isMoved(item: OrderItem): boolean {
+  return itemBumps(item) > 0;
 }
 
 /**
- * Effective order-week (Monday) for one item. Only week-shift (cutoff) routes
- * move to the following week when out of stock; day-shift routes (4, 6, 14)
- * stay in their original week — the move is a single day, tracked on the
- * delivery date, not a jump to the next week's view.
+ * Current scheduled delivery date for one item — the original shifted forward
+ * by `bumps` of the route's unit (a day for 4/6/14, a week for the rest).
+ */
+export function itemDeliveryDate(order: Order, item: OrderItem): string | null {
+  const base = getBaseDelivery(order);
+  if (base === null) return null;
+  const bumps = itemBumps(item);
+  if (bumps === 0) return base;
+  return itemShiftUnit(order.route_number) === "day"
+    ? shiftDays(base, bumps)
+    : shiftWeeks(base, bumps);
+}
+
+/**
+ * Current scheduled order-week (Monday). Week-unit routes advance one week per
+ * bump; day-unit routes (4/6/14) stay in their original week — a day bump is
+ * tracked on the delivery date, not as a jump to another week's view.
  */
 export function itemOrderWeek(order: Order, item: OrderItem): string {
-  if (
-    item.status === "out_of_stock" &&
-    itemShiftUnit(order.route_number) === "week"
-  ) {
-    return shiftWeeks(order.order_week, 1);
+  const bumps = itemBumps(item);
+  if (bumps > 0 && itemShiftUnit(order.route_number) === "week") {
+    return shiftWeeks(order.order_week, bumps);
   }
   return order.order_week;
 }
 
 /**
- * Short label for an out-of-stock item's move, e.g. "next day" / "next week",
- * or null when the item hasn't moved. Used for the "moved" indicator on both
- * the driver and office views.
+ * Every week an item shows up in. A pushed week-unit item appears in TWO — its
+ * original week and its current scheduled week; everything else appears in one.
  */
-export function itemMoveLabel(order: Order, item: OrderItem): string | null {
-  if (item.status !== "out_of_stock" || getBaseDelivery(order) === null) {
-    return null;
+export function itemWeeks(order: Order, item: OrderItem): string[] {
+  const current = itemOrderWeek(order, item);
+  if (
+    !isTerminal(item) &&
+    isMoved(item) &&
+    itemShiftUnit(order.route_number) === "week" &&
+    current !== order.order_week
+  ) {
+    return [order.order_week, current];
   }
-  return itemShiftUnit(order.route_number) === "day" ? "next day" : "next week";
+  return [current];
 }
 
 /**
  * How an item relates to a particular week's driver view:
- *  - normal:    in-stock/open item delivering that week
- *  - day_move:  out-of-stock on a no-cutoff route (4/6/14) — stays in its week,
- *               delivery pushed one day
- *  - moved_out: out-of-stock week-shift item in its ORIGINAL week — leaving for
- *               the next week (shown with a slash)
- *  - moved_in:  the same item in the FOLLOWING week — arrived from last week
+ *  - normal:    on its scheduled date, delivering that week
+ *  - day_move:  pushed on a no-cutoff route (4/6/14) — stays in its week, the
+ *               delivery date is a later day
+ *  - moved_out: a pushed week-unit item in its ORIGINAL week — it has moved on
+ *               to a later week (shown with a slash)
+ *  - moved_in:  the same item in its CURRENT scheduled week — arrived from an
+ *               earlier week
  */
 export type ItemWeekRole = "normal" | "day_move" | "moved_out" | "moved_in";
 
@@ -131,31 +156,29 @@ export type ItemInWeek = { item: OrderItem; index: number; role: ItemWeekRole };
 
 /**
  * The items of an order that appear in a given week's driver view, each tagged
- * with its role. A week-shift out-of-stock item appears in TWO weeks — its
- * origin week (moved_out) and the following week (moved_in); everything else
- * appears only in its own week.
+ * with its role.
  */
 export function itemsInWeek(order: Order, week: string): ItemInWeek[] {
   const result: ItemInWeek[] = [];
   normalizeItems(order).forEach((item, index) => {
     // Terminal items (fulfilled/cancelled) are resolved — show them once, in
-    // their settled week, with no "moving" split.
+    // their settled week, with no move split.
     if (isTerminal(item)) {
       if (itemOrderWeek(order, item) === week) {
         result.push({ item, index, role: "normal" });
       }
       return;
     }
-    const outOfStock = item.status === "out_of_stock";
-    if (outOfStock && itemShiftUnit(order.route_number) === "week") {
+    const moved = isMoved(item);
+    if (moved && itemShiftUnit(order.route_number) === "week") {
       const origin = order.order_week;
-      const dest = shiftWeeks(order.order_week, 1);
+      const current = itemOrderWeek(order, item);
       if (week === origin) result.push({ item, index, role: "moved_out" });
-      else if (week === dest) result.push({ item, index, role: "moved_in" });
+      else if (week === current) result.push({ item, index, role: "moved_in" });
       return;
     }
     if (itemOrderWeek(order, item) !== week) return;
-    result.push({ item, index, role: outOfStock ? "day_move" : "normal" });
+    result.push({ item, index, role: moved ? "day_move" : "normal" });
   });
   return result;
 }

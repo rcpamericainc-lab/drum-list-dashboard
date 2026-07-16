@@ -12,10 +12,10 @@ import {
   getBaseDelivery,
   isCancelled,
   isFulfilled,
+  isMoved,
   isNoCutoffRoute,
   itemDeliveryDate,
-  itemMoveLabel,
-  itemOrderWeek,
+  itemWeeks,
   normalizeItems,
   returningQty,
   rollupStatus,
@@ -62,19 +62,6 @@ function hasInvoice(o: OfficeOrder): boolean {
   return (o.invoice_number ?? "").trim() !== "";
 }
 
-/**
- * Availability options the office can pick for an item. No-cutoff routes
- * (4, 6, 14) are only ever in-stock or out-of-stock — never "open" — but a
- * legacy row's current status is kept selectable so it never vanishes.
- */
-function statusOptionsFor(
-  routeNumber: string,
-  current: OrderStatus,
-): OrderStatus[] {
-  if (!isNoCutoffRoute(routeNumber)) return ORDER_STATUSES;
-  const base: OrderStatus[] = ["in_stock", "out_of_stock"];
-  return base.includes(current) ? base : [current, ...base];
-}
 
 /** "Jul 7, 3:00 PM" — the office computer's local (Eastern) time. */
 function formatDateTime(iso: string): string {
@@ -99,7 +86,9 @@ export function OfficeDashboard({
   );
   // Empty = all routes; otherwise the specific routes to show together.
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
-  const [statusFilter, setStatusFilter] = useState<OrderStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<
+    OrderStatus | "moved" | "all"
+  >("all");
   const [invoiceFilter, setInvoiceFilter] = useState<"all" | "with" | "without">(
     "all",
   );
@@ -126,7 +115,7 @@ export function OfficeDashboard({
   const weeks = useMemo(
     () =>
       Array.from(
-        new Set(orders.flatMap((o) => o.items.map((it) => itemOrderWeek(o, it)))),
+        new Set(orders.flatMap((o) => o.items.flatMap((it) => itemWeeks(o, it)))),
       )
         .sort()
         .reverse(),
@@ -155,11 +144,13 @@ export function OfficeDashboard({
       (selectedRoutes.length === 0 ||
         selectedRoutes.includes(o.route_number)) &&
       (statusFilter === "all" ||
-        o.items.some((it) => it.status === statusFilter)) &&
+        (statusFilter === "moved"
+          ? o.items.some(isMoved)
+          : o.items.some((it) => it.status === statusFilter))) &&
       (invoiceFilter === "all" ||
         (invoiceFilter === "with" ? hasInvoice(o) : !hasInvoice(o))) &&
       (weekFilter === "all" ||
-        o.items.some((it) => itemOrderWeek(o, it) === weekFilter)) &&
+        o.items.some((it) => itemWeeks(o, it).includes(weekFilter))) &&
       (dayFilter === "all" ||
         o.items.some((it) => itemDeliveryDate(o, it) === dayFilter)) &&
       (fulfillmentFilter === "all" ||
@@ -238,10 +229,25 @@ export function OfficeDashboard({
     }
   }
 
-  // Set one item's stock availability. Dates stay at their base; the
-  // out-of-stock shift is derived per item at display time.
+  // Set one item's stock availability. Marking out-of-stock is an action, not a
+  // resting state: it pushes the item one unit forward (a day for 4/6/14, a
+  // week otherwise) and reopens it, so it can be pushed again next time. The
+  // scheduled date is derived from the bump count; the original date is kept.
   function setItemStatus(order: OfficeOrder, index: number, next: OrderStatus) {
-    if (order.items[index]?.status === next) return;
+    const current = order.items[index];
+    if (!current) return;
+
+    if (next === "out_of_stock") {
+      const nextItems = order.items.map((it, i) =>
+        i === index
+          ? { ...it, status: "open" as const, bumps: (it.bumps ?? 0) + 1 }
+          : it,
+      );
+      persistItems(order, nextItems, "Couldn't move the item");
+      return;
+    }
+
+    if (current.status === next) return;
     const nextItems = order.items.map((it, i) =>
       i === index ? { ...it, status: next } : it,
     );
@@ -343,7 +349,9 @@ export function OfficeDashboard({
         `Route${selectedRoutes.length === 1 ? "" : "s"}: ${[...selectedRoutes].sort().join(", ")}`,
       );
     if (statusFilter !== "all")
-      activeFilters.push(`Availability: ${STATUS_META[statusFilter].label}`);
+      activeFilters.push(
+        `Availability: ${statusFilter === "moved" ? "Moved" : STATUS_META[statusFilter].label}`,
+      );
     if (invoiceFilter !== "all")
       activeFilters.push(
         `Invoice: ${invoiceFilter === "with" ? "With invoice #" : "Without invoice #"}`,
@@ -401,13 +409,12 @@ export function OfficeDashboard({
           <FilterSelect
             label="Availability"
             value={statusFilter}
-            onChange={(v) => setStatusFilter(v as OrderStatus | "all")}
+            onChange={(v) => setStatusFilter(v as OrderStatus | "moved" | "all")}
             options={[
               { value: "all", label: "All" },
-              ...ORDER_STATUSES.map((s) => ({
-                value: s,
-                label: STATUS_META[s].label,
-              })),
+              { value: "open", label: STATUS_META.open.label },
+              { value: "in_stock", label: STATUS_META.in_stock.label },
+              { value: "moved", label: "Moved" },
             ]}
           />
           <FilterSelect
@@ -657,13 +664,11 @@ export function OfficeDashboard({
                           }
                           className="h-9 border border-[#888888]/50 bg-white px-2 text-sm font-semibold text-[#1A1A1A] outline-none focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20 disabled:opacity-50"
                         >
-                          {statusOptionsFor(o.route_number, it.status).map(
-                            (s) => (
-                              <option key={s} value={s}>
-                                {STATUS_META[s].label}
-                              </option>
-                            ),
-                          )}
+                          {ORDER_STATUSES.map((s) => (
+                            <option key={s} value={s}>
+                              {STATUS_META[s].label}
+                            </option>
+                          ))}
                         </select>
                       )}
                     </Td>
@@ -739,9 +744,9 @@ function ItemFulfillment({
 }
 
 /**
- * Per-item delivery cell. An out-of-stock item shows its original date struck
- * through with the moved date beside it — a week later for cutoff routes, a day
- * later for the no-cutoff routes (4/6/14).
+ * Per-item delivery cell. A pushed item shows its original date struck through
+ * with the current scheduled date beside it (the original shifted forward by
+ * however many times it has been marked out of stock).
  */
 function ItemDelivery({
   order,
@@ -752,7 +757,7 @@ function ItemDelivery({
 }) {
   const base = getBaseDelivery(order);
   if (base === null) return <>—</>;
-  if (itemMoveLabel(order, item)) {
+  if (isMoved(item)) {
     return (
       <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
         <span className="text-[#888888] line-through decoration-[#009ACE] decoration-2">
