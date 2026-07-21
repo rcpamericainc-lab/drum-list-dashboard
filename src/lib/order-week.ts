@@ -187,6 +187,15 @@ export function shiftDays(key: string, days: number): string {
   return toDateKey(d);
 }
 
+/** Monday (as 'YYYY-MM-DD') of the week containing the given date key. */
+export function weekOf(key: string): string {
+  const d = parseDateKey(key);
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const shift = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + shift);
+  return toDateKey(d);
+}
+
 /** Human label for an order-week key, e.g. "Week of Mon, Jul 6, 2026". */
 export function formatWeekLabel(weekKey: string): string {
   const label = parseDateKey(weekKey).toLocaleDateString("en-US", {

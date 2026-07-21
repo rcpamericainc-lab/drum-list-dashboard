@@ -1,5 +1,5 @@
 import type { Database, OrderItem, OrderStatus } from "@/lib/database.types";
-import { shiftDays, shiftWeeks } from "@/lib/order-week";
+import { shiftDays, shiftWeeks, weekOf } from "@/lib/order-week";
 import { getRoute } from "@/lib/routes";
 
 type Order = Database["public"]["Tables"]["orders"]["Row"];
@@ -109,16 +109,24 @@ export function itemDeliveryDate(order: Order, item: OrderItem): string | null {
 }
 
 /**
- * Current scheduled order-week (Monday). Week-unit routes advance one week per
- * bump; day-unit routes (4/6/14) stay in their original week — a day bump is
- * tracked on the delivery date, not as a jump to another week's view.
+ * Current scheduled order-week (Monday).
+ *
+ * Week-unit (cutoff) routes bucket by the stored order_week (the Monday of the
+ * computed delivery week), advancing one week per bump.
+ *
+ * Day-unit (no-cutoff) routes 4/6/14 store order_week as the *intake* week,
+ * which can differ from the requested delivery week — so they bucket by the
+ * week of the actual scheduled delivery date (date_needed, plus any day bumps)
+ * instead. This keeps an order needed the week of the 20th in that week's view
+ * even if it was placed the week of the 13th.
  */
 export function itemOrderWeek(order: Order, item: OrderItem): string {
-  const bumps = itemBumps(item);
-  if (bumps > 0 && itemShiftUnit(order.route_number) === "week") {
-    return shiftWeeks(order.order_week, bumps);
+  if (itemShiftUnit(order.route_number) === "week") {
+    const bumps = itemBumps(item);
+    return bumps > 0 ? shiftWeeks(order.order_week, bumps) : order.order_week;
   }
-  return order.order_week;
+  const delivery = itemDeliveryDate(order, item);
+  return delivery ? weekOf(delivery) : order.order_week;
 }
 
 /**
