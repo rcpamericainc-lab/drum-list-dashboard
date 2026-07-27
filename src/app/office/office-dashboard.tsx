@@ -914,7 +914,15 @@ function buildPrintHtml(
       return o.items
         .map((it, idx) => {
           itemCount++;
-          const delivery = itemDeliveryDate(o, it);
+          const base = getBaseDelivery(o);
+          // Match the on-screen cell: a pushed item shows its original date
+          // struck through with the current scheduled date beside it.
+          const deliveryCell =
+            base === null
+              ? "—"
+              : isMoved(it)
+                ? `<span class="was">${escapeHtml(formatDate(base))}</span> <span class="now">${escapeHtml(formatDate(itemDeliveryDate(o, it)!))}</span>`
+                : escapeHtml(formatDate(base));
           const shared =
             idx === 0
               ? `
@@ -947,7 +955,7 @@ function buildPrintHtml(
           return `
         <tr${idx === 0 ? ' class="order-start"' : ""}>${shared}
           <td>${escapeHtml(it.product_name)}${it.quantity > 1 ? ` <span class="qty">×${it.quantity}</span>` : ""}</td>${sharedTail}
-          <td>${delivery ? escapeHtml(formatDate(delivery)) : "—"}</td>${sharedTail2}
+          <td>${deliveryCell}</td>${sharedTail2}
           <td class="status">${escapeHtml(STATUS_META[it.status].label)}</td>
           <td>${fulfillmentCell}</td>
         </tr>`;
@@ -1001,6 +1009,8 @@ function buildPrintHtml(
   .qty { color: #888888; }
   .addr { font-size: 10px; color: #888888; }
   .back { font-size: 10px; font-weight: 700; color: #B00020; }
+  .was { color: #888888; text-decoration: line-through; text-decoration-color: #009ACE; }
+  .now { font-weight: 700; color: #009ACE; }
   tfoot td { padding-top: 12px; font-size: 11px; color: #888888; }
   @page { size: landscape; margin: 0.5in; }
 </style>
