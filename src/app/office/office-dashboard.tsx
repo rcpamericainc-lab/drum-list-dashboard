@@ -209,6 +209,32 @@ export function OfficeDashboard({
   const rangeStart = sorted.length === 0 ? 0 : pageStart + 1;
   const rangeEnd = pageStart + pageOrders.length;
 
+  // When filtering by a week or delivery day (both per-item delivery
+  // attributes), show only the order's items that land in that week/day — not
+  // the whole order. A moved item lands in its scheduled week; the rest of the
+  // order stays in its own week. Other filters don't narrow which items show.
+  function visibleItems(o: OfficeOrder): { it: OrderItem; idx: number }[] {
+    return o.items
+      .map((it, idx) => ({ it, idx }))
+      .filter(({ it }) => {
+        if (weekFilter !== "all" && !itemWeeks(o, it).includes(weekFilter)) {
+          return false;
+        }
+        if (dayFilter !== "all" && itemDeliveryDate(o, it) !== dayFilter) {
+          return false;
+        }
+        return true;
+      });
+  }
+
+  // Same item narrowing for export/print, as orders carrying only their visible
+  // items (orders left with none are dropped).
+  function projectedOrders(list: OfficeOrder[]): OfficeOrder[] {
+    return list
+      .map((o) => ({ ...o, items: visibleItems(o).map((v) => v.it) }))
+      .filter((o) => o.items.length > 0);
+  }
+
   function handleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -349,7 +375,7 @@ export function OfficeDashboard({
     if (dayFilter !== "all") parts.push(`day-${dayFilter}`);
     if (weekFilter !== "all") parts.push(`week-${weekFilter}`);
 
-    const blob = new Blob([ordersToCsv(sorted)], {
+    const blob = new Blob([ordersToCsv(projectedOrders(sorted))], {
       type: "text/csv;charset=utf-8;",
     });
     const url = URL.createObjectURL(blob);
@@ -398,7 +424,7 @@ export function OfficeDashboard({
       return;
     }
     win.document.write(
-      buildPrintHtml(sorted, activeFilters, window.location.origin),
+      buildPrintHtml(projectedOrders(sorted), activeFilters, window.location.origin),
     );
     win.document.close();
   }
@@ -602,16 +628,17 @@ export function OfficeDashboard({
               </tr>
             ) : (
               pageOrders.flatMap((o) => {
-                const items = o.items;
-                const n = items.length;
+                const shown = visibleItems(o);
+                const n = shown.length;
                 const busy = busyId === o.id;
-                const allCancelled = items.length > 0 && items.every(isCancelled);
-                return items.map((it, idx) => (
+                const allCancelled =
+                  o.items.length > 0 && o.items.every(isCancelled);
+                return shown.map(({ it, idx }, pos) => (
                   <tr
                     key={`${o.id}:${idx}`}
-                    className={`hover:bg-[#F5F5F5] ${idx === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
+                    className={`hover:bg-[#F5F5F5] ${pos === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
                   >
-                    {idx === 0 && (
+                    {pos === 0 && (
                       <Td
                         rowSpan={n}
                         className="align-top font-semibold text-[#1A1A1A]"
@@ -629,7 +656,7 @@ export function OfficeDashboard({
                         </div>
                       )}
                     </Td>
-                    {idx === 0 && (
+                    {pos === 0 && (
                       <Td rowSpan={n} className="align-top">
                         <div>{o.customer_name}</div>
                         {o.customer_address && (
@@ -649,12 +676,12 @@ export function OfficeDashboard({
                         </button>
                       </Td>
                     )}
-                    {idx === 0 && (
+                    {pos === 0 && (
                       <Td rowSpan={n} className="align-top">
                         {o.driver_name ?? "—"}
                       </Td>
                     )}
-                    {idx === 0 && (
+                    {pos === 0 && (
                       <Td rowSpan={n} className="align-top">
                         {formatDate(o.date_needed)}
                       </Td>
@@ -662,7 +689,7 @@ export function OfficeDashboard({
                     <Td className="align-top">
                       <ItemDelivery order={o} item={it} />
                     </Td>
-                    {idx === 0 && (
+                    {pos === 0 && (
                       <Td
                         rowSpan={n}
                         className="align-top whitespace-nowrap"
@@ -670,7 +697,7 @@ export function OfficeDashboard({
                         {formatDateTime(o.created_at)}
                       </Td>
                     )}
-                    {idx === 0 && (
+                    {pos === 0 && (
                       <Td rowSpan={n} className="align-top">
                         <input
                           type="text"
