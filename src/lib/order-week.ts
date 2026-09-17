@@ -10,8 +10,8 @@
  *    pushed to the next one
  *
  * All comparisons happen in Eastern civil time, so a device in another timezone
- * cannot misclassify an order near a noon cutoff. DST transitions can shift a
- * cutoff by an hour in the transition week only; irrelevant for noon cutoffs.
+ * cannot misclassify an order near a cutoff. DST transitions can shift a cutoff
+ * by an hour in the transition week only; irrelevant for the 9:00 AM cutoff.
  */
 
 import type { RouteConfig } from "@/lib/routes";

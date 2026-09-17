@@ -22,11 +22,11 @@ export const ROUTES: RouteConfig[] = [
   { number: "4" }, // no cutoff
   { number: "6" }, // no cutoff
   { number: "14" }, // no cutoff
-  { number: "15", delivery: 4, cutoff: { weekday: 3, hour: 12, minute: 0 } }, // Thu delivery, Wed 12pm
-  { number: "16", delivery: 3, cutoff: { weekday: 2, hour: 12, minute: 0 } }, // Wed delivery, Tue 12pm
-  { number: "20", delivery: 1, cutoff: { weekday: 5, hour: 12, minute: 0 } }, // Mon delivery, Fri 12pm
-  { number: "22", delivery: 1, cutoff: { weekday: 5, hour: 12, minute: 0 } }, // Mon delivery, Fri 12pm
-  { number: "23", delivery: 2, cutoff: { weekday: 1, hour: 12, minute: 0 } }, // Tue delivery, Mon 12pm
+  { number: "15", delivery: 4, cutoff: { weekday: 3, hour: 9, minute: 0 } }, // Thu delivery, Wed 9am
+  { number: "16", delivery: 3, cutoff: { weekday: 2, hour: 9, minute: 0 } }, // Wed delivery, Tue 9am
+  { number: "20", delivery: 1, cutoff: { weekday: 5, hour: 9, minute: 0 } }, // Mon delivery, Fri 9am
+  { number: "22", delivery: 1, cutoff: { weekday: 5, hour: 9, minute: 0 } }, // Mon delivery, Fri 9am
+  { number: "23", delivery: 2, cutoff: { weekday: 1, hour: 9, minute: 0 } }, // Tue delivery, Mon 9am
 ];
 
 export const ROUTE_NUMBERS = ROUTES.map((r) => r.number);
@@ -51,7 +51,7 @@ function formatClock(hour: number, minute: number): string {
   return `${h12}:${String(minute).padStart(2, "0")} ${ampm}`;
 }
 
-/** Human summary of a route's schedule, e.g. "Delivers Thursday · cutoff Wednesday 12:00 PM". */
+/** Human summary of a route's schedule, e.g. "Delivers Thursday · cutoff Wednesday 9:00 AM". */
 export function describeRoute(route: RouteConfig): string {
   if (!route.cutoff || route.delivery === undefined) {
     return "No cutoff — orders go to the current week";
