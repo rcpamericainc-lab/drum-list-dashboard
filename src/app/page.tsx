@@ -27,6 +27,7 @@ import {
   formatDate,
   formatWeekLabel,
   parseDateKey,
+  shiftWeeks,
   toDateKey,
 } from "@/lib/order-week";
 import { ROUTE_NUMBERS, describeRoute, getRoute } from "@/lib/routes";
@@ -36,11 +37,11 @@ type OrderInsert = Database["public"]["Tables"]["orders"]["Insert"];
 
 const ROUTE_KEY = "fleetview.route";
 const NAME_KEY = "fleetview.driverName";
+const ORDER_DRAFT_KEY = "fleetview.orderDraft";
+const deliveryDraftKey = (orderId: string) => `fleetview.deliveryDraft.${orderId}`;
 
 const byDateNeeded = (a: Order, b: Order) =>
   a.date_needed.localeCompare(b.date_needed);
-
-const DAY_MS = 86_400_000;
 
 function addMonths(date: Date, months: number): Date {
   return new Date(date.getFullYear(), date.getMonth() + months, date.getDate());
@@ -60,16 +61,14 @@ function mondayOnOrBefore(date: Date): Date {
 
 function weekOptionsAround(weekKey: string): string[] {
   const currentMonday = parseDateKey(weekKey);
-  const start = mondayOnOrAfter(addMonths(currentMonday, -1));
-  const end = mondayOnOrBefore(addMonths(currentMonday, 1));
+  const start = toDateKey(mondayOnOrAfter(addMonths(currentMonday, -1)));
+  const end = toDateKey(mondayOnOrBefore(addMonths(currentMonday, 1)));
   const weeks: string[] = [];
 
-  for (
-    let cursor = start;
-    cursor <= end;
-    cursor = new Date(cursor.getTime() + 7 * DAY_MS)
-  ) {
-    weeks.push(toDateKey(cursor));
+  // Step by calendar weeks, not 7 * 24h: across a DST change a fixed-ms step
+  // drifts off midnight and lands on Sunday.
+  for (let cursor = start; cursor <= end; cursor = shiftWeeks(cursor, 1)) {
+    weeks.push(cursor);
   }
 
   return weeks;
@@ -95,6 +94,14 @@ type Confirmation = {
 
 /** A product line being entered on the intake form. */
 type LineItem = { product_name: string; quantity: number };
+
+/** In-progress New Order form fields, saved so a backgrounded/reloaded phone doesn't lose them. */
+type OrderDraft = {
+  items: LineItem[];
+  customerName: string;
+  customerAddress: string;
+  dateNeeded: string;
+};
 
 export default function OrderingPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -141,6 +148,30 @@ export default function OrderingPage() {
   useEffect(() => {
     localStorage.setItem(NAME_KEY, driverName);
   }, [driverName]);
+
+  // Restore an in-progress New Order draft. Phones commonly reload the page
+  // (state and all) after the browser tab is backgrounded, so anything the
+  // driver typed needs to survive in localStorage, not just React state.
+  useEffect(() => {
+    const raw = localStorage.getItem(ORDER_DRAFT_KEY);
+    if (!raw) return;
+    try {
+      const draft = JSON.parse(raw) as Partial<OrderDraft>;
+      if (Array.isArray(draft.items) && draft.items.length > 0) {
+        setItems(draft.items);
+      }
+      if (typeof draft.customerName === "string") setCustomerName(draft.customerName);
+      if (typeof draft.customerAddress === "string") setCustomerAddress(draft.customerAddress);
+      if (typeof draft.dateNeeded === "string") setDateNeeded(draft.dateNeeded);
+    } catch {
+      // Corrupt draft; ignore and start fresh.
+    }
+  }, []);
+
+  useEffect(() => {
+    const draft: OrderDraft = { items, customerName, customerAddress, dateNeeded };
+    localStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify(draft));
+  }, [items, customerName, customerAddress, dateNeeded]);
 
   // Load DB orders for the selected route.
   useEffect(() => {
@@ -268,6 +299,7 @@ export default function OrderingPage() {
     setCustomerName("");
     setCustomerAddress("");
     setDateNeeded("");
+    localStorage.removeItem(ORDER_DRAFT_KEY);
   }
 
   // Persist a driver's delivery report (fulfillment fields only). Stock status
@@ -654,6 +686,28 @@ function DriverOrderCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Restore an in-progress delivery report for this order, if the phone
+  // reloaded the page (e.g. backgrounded) while the driver was filling it in.
+  useEffect(() => {
+    const raw = localStorage.getItem(deliveryDraftKey(order.id));
+    if (!raw) return;
+    try {
+      const draft = JSON.parse(raw) as DeliveryLine[];
+      if (Array.isArray(draft) && draft.length > 0) {
+        setLines(draft);
+        setEditing(true);
+      }
+    } catch {
+      // Corrupt draft; ignore.
+    }
+  }, [order.id]);
+
+  // Persist the report as the driver fills it in.
+  useEffect(() => {
+    if (!editing) return;
+    localStorage.setItem(deliveryDraftKey(order.id), JSON.stringify(lines));
+  }, [editing, lines, order.id]);
+
   function openSheet() {
     setLines(
       deliverable.map(({ item, index }) => ({
@@ -699,6 +753,7 @@ function DriverOrderCard({
       );
       return;
     }
+    localStorage.removeItem(deliveryDraftKey(order.id));
     setEditing(false);
   }
 
@@ -830,6 +885,7 @@ function DriverOrderCard({
             <button
               type="button"
               onClick={() => {
+                localStorage.removeItem(deliveryDraftKey(order.id));
                 setEditing(false);
                 setError(null);
               }}
