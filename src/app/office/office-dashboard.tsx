@@ -212,12 +212,6 @@ export function OfficeDashboard({
     };
   }, [supabase, resync]);
 
-  // Show the unseen count in the browser tab title, e.g. "(2) Order Management".
-  useEffect(() => {
-    const base = document.title.replace(/^\(\d+\)\s*/, "");
-    document.title = newIds.size > 0 ? `(${newIds.size}) ${base}` : base;
-  }, [newIds]);
-
   function markSeen(id: string) {
     setNewIds((s) => {
       if (!s.has(id)) return s;
@@ -686,35 +680,6 @@ export function OfficeDashboard({
         </p>
       )}
 
-      {newIds.size > 0 && (
-        <NewOrdersBanner
-          count={newIds.size}
-          hiddenCount={
-            [...newIds].filter((id) => !filtered.some((o) => o.id === id))
-              .length
-          }
-          onClearFilters={
-            hasFilters
-              ? () => {
-                  setSelectedRoutes([]);
-                  setStatusFilter("all");
-                  setInvoiceFilter("all");
-                  setWeekFilter("all");
-                  setDayFilter("all");
-                  setFulfillmentFilter("all");
-                  setReturnsFilter("all");
-                }
-              : undefined
-          }
-          onShowNewest={() => {
-            setSortKey("placed");
-            setSortDir("desc");
-            setPage(1);
-          }}
-          onDismiss={() => setNewIds(new Set())}
-        />
-      )}
-
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="flex items-center gap-3 text-sm font-medium text-[#888888]">
           <LiveIndicator status={liveStatus} />
@@ -786,12 +751,12 @@ export function OfficeDashboard({
                 return shown.map(({ it, idx }, pos) => (
                   <tr
                     key={`${o.id}:${idx}`}
-                    className={`${isNew ? "bg-[#FFF6D6] hover:bg-[#FFEFB8]" : "hover:bg-[#F5F5F5]"} ${pos === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
+                    className={`hover:bg-[#F5F5F5] ${pos === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
                   >
                     {pos === 0 && (
                       <Td
                         rowSpan={n}
-                        className={`align-top font-semibold text-[#1A1A1A] ${isNew ? "border-l-4 border-l-[#F2A900]" : ""}`}
+                        className="align-top font-semibold text-[#1A1A1A]"
                       >
                         {o.route_number}
                         {isNew && (
@@ -799,7 +764,7 @@ export function OfficeDashboard({
                             type="button"
                             onClick={() => markSeen(o.id)}
                             title="Mark as seen"
-                            className="mt-1 block bg-[#F2A900] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#1A1A1A] hover:bg-[#D99700]"
+                            className="mt-1 block bg-[#1E9E5A] px-1.5 py-0.5 text-[10px] font-bold uppercase text-white hover:bg-[#187F48]"
                           >
                             New ✓
                           </button>
@@ -1367,60 +1332,5 @@ function LiveIndicator({ status }: { status: LiveStatus }) {
       </span>
       {meta.label}
     </span>
-  );
-}
-
-function NewOrdersBanner({
-  count,
-  hiddenCount,
-  onClearFilters,
-  onShowNewest,
-  onDismiss,
-}: {
-  count: number;
-  hiddenCount: number;
-  onClearFilters?: () => void;
-  onShowNewest: () => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="flex flex-wrap items-center gap-3 border-l-4 border-[#F2A900] bg-[#FFF6D6] px-4 py-3 text-sm text-[#1A1A1A] shadow-sm"
-    >
-      <span className="font-semibold">
-        {count} new order{count === 1 ? "" : "s"} arrived
-        {hiddenCount > 0 && (
-          <span className="font-normal text-[#444444]">
-            {" "}
-            ({hiddenCount} hidden by your filters)
-          </span>
-        )}
-      </span>
-      <button
-        type="button"
-        onClick={onShowNewest}
-        className="h-8 bg-[#1A1A1A] px-3 text-xs font-semibold uppercase text-white hover:bg-[#444444]"
-      >
-        Show newest first
-      </button>
-      {hiddenCount > 0 && onClearFilters && (
-        <button
-          type="button"
-          onClick={onClearFilters}
-          className="h-8 border border-[#1A1A1A]/30 bg-white px-3 text-xs font-semibold uppercase text-[#1A1A1A] hover:bg-[#F5F5F5]"
-        >
-          Clear filters
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={onDismiss}
-        className="ml-auto h-8 px-3 text-xs font-semibold uppercase text-[#444444] underline-offset-2 hover:underline"
-      >
-        Mark all seen
-      </button>
-    </div>
   );
 }
