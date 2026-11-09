@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ItemStatusBadge } from "@/components/item-status-badge";
 import type { Database, OrderItem, OrderStatus } from "@/lib/database.types";
@@ -63,6 +63,29 @@ function hasInvoice(o: OfficeOrder): boolean {
 }
 
 
+/**
+ * Fold a row from the database (live event or re-fetch) into the local list.
+ * If the office user is mid-edit on that order's invoice input, keep what
+ * they're typing instead of overwriting it.
+ */
+function mergeRow(
+  prev: OfficeOrder[],
+  row: OfficeOrder,
+  editingInvoiceId: string | null,
+): OfficeOrder[] {
+  const incoming = { ...row, items: normalizeItems(row) };
+  const i = prev.findIndex((o) => o.id === row.id);
+  if (i === -1) return [incoming, ...prev];
+  const next = [...prev];
+  next[i] =
+    editingInvoiceId === row.id
+      ? { ...incoming, invoice_number: prev[i].invoice_number }
+      : incoming;
+  return next;
+}
+
+type LiveStatus = "connecting" | "live" | "offline";
+
 /** "Jul 7, 3:00 PM" — the office computer's local (Eastern) time. */
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -109,6 +132,100 @@ export function OfficeDashboard({
   // The invoice value when an input was focused, so we can skip no-op saves and
   // roll back to it if the write fails.
   const invoiceFocusRef = useRef("");
+  // Which order's invoice input has focus, so live updates don't clobber typing.
+  const editingInvoiceIdRef = useRef<string | null>(null);
+
+  // ---- Live updates -------------------------------------------------------
+  // Orders that arrived live and haven't been acknowledged ("seen") yet.
+  const [newIds, setNewIds] = useState<Set<string>>(() => new Set());
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>("connecting");
+  const ordersRef = useRef(orders);
+  useEffect(() => {
+    ordersRef.current = orders;
+  }, [orders]);
+
+  // Re-fetch everything to catch changes missed while the connection was down
+  // or the computer was asleep. Anything we hadn't seen before is flagged new.
+  const resync = useCallback(async () => {
+    const { data } = await supabase
+      .from("orders")
+      .select("*")
+      .returns<OfficeOrder[]>();
+    if (!data) return;
+    const known = new Set(ordersRef.current.map((o) => o.id));
+    const added = data.filter((o) => !known.has(o.id)).map((o) => o.id);
+    const editingId = editingInvoiceIdRef.current;
+    setOrders((prev) => data.reduce((acc, row) => mergeRow(acc, row, editingId), prev));
+    if (added.length > 0) {
+      setNewIds((s) => new Set([...s, ...added]));
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    let hasConnected = false;
+
+    function apply(row: OfficeOrder, isInsert: boolean) {
+      const isNew =
+        isInsert || !ordersRef.current.some((o) => o.id === row.id);
+      const editingId = editingInvoiceIdRef.current;
+      setOrders((prev) => mergeRow(prev, row, editingId));
+      if (isNew) setNewIds((s) => new Set(s).add(row.id));
+    }
+
+    const channel = supabase
+      .channel("office-orders")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "orders" },
+        (payload) => apply(payload.new as OfficeOrder, true),
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "orders" },
+        (payload) => apply(payload.new as OfficeOrder, false),
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setLiveStatus("live");
+          // On a reconnect, fill in anything that happened while we were down.
+          if (hasConnected) void resync();
+          hasConnected = true;
+        } else if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT" ||
+          status === "CLOSED"
+        ) {
+          setLiveStatus("offline");
+        }
+      });
+
+    // Browsers throttle background tabs and sleeping PCs drop sockets; catch up
+    // whenever the dashboard comes back into view.
+    function onVisible() {
+      if (document.visibilityState === "visible") void resync();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      void supabase.removeChannel(channel);
+    };
+  }, [supabase, resync]);
+
+  // Show the unseen count in the browser tab title, e.g. "(2) Order Management".
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\)\s*/, "");
+    document.title = newIds.size > 0 ? `(${newIds.size}) ${base}` : base;
+  }, [newIds]);
+
+  function markSeen(id: string) {
+    setNewIds((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
 
   const routes = useMemo(
     () => Array.from(new Set(orders.map((o) => o.route_number))).sort(),
@@ -569,13 +686,45 @@ export function OfficeDashboard({
         </p>
       )}
 
+      {newIds.size > 0 && (
+        <NewOrdersBanner
+          count={newIds.size}
+          hiddenCount={
+            [...newIds].filter((id) => !filtered.some((o) => o.id === id))
+              .length
+          }
+          onClearFilters={
+            hasFilters
+              ? () => {
+                  setSelectedRoutes([]);
+                  setStatusFilter("all");
+                  setInvoiceFilter("all");
+                  setWeekFilter("all");
+                  setDayFilter("all");
+                  setFulfillmentFilter("all");
+                  setReturnsFilter("all");
+                }
+              : undefined
+          }
+          onShowNewest={() => {
+            setSortKey("placed");
+            setSortDir("desc");
+            setPage(1);
+          }}
+          onDismiss={() => setNewIds(new Set())}
+        />
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm font-medium text-[#888888]">
+        <p className="flex items-center gap-3 text-sm font-medium text-[#888888]">
+          <LiveIndicator status={liveStatus} />
+          <span>
           Showing{" "}
           <span className="text-[#1A1A1A]">
             {rangeStart}–{rangeEnd}
           </span>{" "}
           of {filtered.length} matching · {orders.length} total
+          </span>
         </p>
         <PaginationBar
           page={currentPage}
@@ -633,17 +782,28 @@ export function OfficeDashboard({
                 const busy = busyId === o.id;
                 const allCancelled =
                   o.items.length > 0 && o.items.every(isCancelled);
+                const isNew = newIds.has(o.id);
                 return shown.map(({ it, idx }, pos) => (
                   <tr
                     key={`${o.id}:${idx}`}
-                    className={`hover:bg-[#F5F5F5] ${pos === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
+                    className={`${isNew ? "bg-[#FFF6D6] hover:bg-[#FFEFB8]" : "hover:bg-[#F5F5F5]"} ${pos === 0 ? "border-t-2 border-[#1A1A1A]/15" : ""}`}
                   >
                     {pos === 0 && (
                       <Td
                         rowSpan={n}
-                        className="align-top font-semibold text-[#1A1A1A]"
+                        className={`align-top font-semibold text-[#1A1A1A] ${isNew ? "border-l-4 border-l-[#F2A900]" : ""}`}
                       >
                         {o.route_number}
+                        {isNew && (
+                          <button
+                            type="button"
+                            onClick={() => markSeen(o.id)}
+                            title="Mark as seen"
+                            className="mt-1 block bg-[#F2A900] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#1A1A1A] hover:bg-[#D99700]"
+                          >
+                            New ✓
+                          </button>
+                        )}
                       </Td>
                     )}
                     <Td className="align-top">
@@ -705,11 +865,15 @@ export function OfficeDashboard({
                           placeholder="Add #"
                           onFocus={(e) => {
                             invoiceFocusRef.current = e.target.value;
+                            editingInvoiceIdRef.current = o.id;
                           }}
                           onChange={(e) =>
                             updateInvoiceLocal(o.id, e.target.value)
                           }
-                          onBlur={(e) => saveInvoice(o.id, e.target.value)}
+                          onBlur={(e) => {
+                            editingInvoiceIdRef.current = null;
+                            saveInvoice(o.id, e.target.value);
+                          }}
                           className="h-9 w-28 border border-[#888888]/50 bg-white px-2 text-sm text-[#1A1A1A] outline-none placeholder:text-[#888888] focus:border-[#009ACE] focus:ring-2 focus:ring-[#009ACE]/20"
                         />
                       </Td>
@@ -1177,5 +1341,86 @@ function Td({
     <td rowSpan={rowSpan} className={`px-4 py-3 text-[#444444] ${className}`}>
       {children}
     </td>
+  );
+}
+
+function LiveIndicator({ status }: { status: LiveStatus }) {
+  const meta = {
+    live: { dot: "bg-[#1E9E5A]", label: "Live", title: "Orders update automatically" },
+    connecting: { dot: "bg-[#888888]", label: "Connecting…", title: "Connecting to live updates" },
+    offline: {
+      dot: "bg-[#F2A900]",
+      label: "Reconnecting…",
+      title: "Live updates paused — will catch up automatically when reconnected",
+    },
+  }[status];
+  return (
+    <span
+      title={meta.title}
+      className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase text-[#444444]"
+    >
+      <span className="relative flex h-2.5 w-2.5">
+        {status === "live" && (
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#1E9E5A] opacity-60" />
+        )}
+        <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${meta.dot}`} />
+      </span>
+      {meta.label}
+    </span>
+  );
+}
+
+function NewOrdersBanner({
+  count,
+  hiddenCount,
+  onClearFilters,
+  onShowNewest,
+  onDismiss,
+}: {
+  count: number;
+  hiddenCount: number;
+  onClearFilters?: () => void;
+  onShowNewest: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex flex-wrap items-center gap-3 border-l-4 border-[#F2A900] bg-[#FFF6D6] px-4 py-3 text-sm text-[#1A1A1A] shadow-sm"
+    >
+      <span className="font-semibold">
+        {count} new order{count === 1 ? "" : "s"} arrived
+        {hiddenCount > 0 && (
+          <span className="font-normal text-[#444444]">
+            {" "}
+            ({hiddenCount} hidden by your filters)
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        onClick={onShowNewest}
+        className="h-8 bg-[#1A1A1A] px-3 text-xs font-semibold uppercase text-white hover:bg-[#444444]"
+      >
+        Show newest first
+      </button>
+      {hiddenCount > 0 && onClearFilters && (
+        <button
+          type="button"
+          onClick={onClearFilters}
+          className="h-8 border border-[#1A1A1A]/30 bg-white px-3 text-xs font-semibold uppercase text-[#1A1A1A] hover:bg-[#F5F5F5]"
+        >
+          Clear filters
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="ml-auto h-8 px-3 text-xs font-semibold uppercase text-[#444444] underline-offset-2 hover:underline"
+      >
+        Mark all seen
+      </button>
+    </div>
   );
 }
